@@ -1,4 +1,76 @@
-# linux_hotkey_window_tools
+# Linux Hotkey Window Tools
+
+> Part of [installation_scripts](https://github.com/mikaeltorni/installation_scripts) — the master installer that orchestrates a productivity-focused Ubuntu 24.04 desktop setup. Tested on Ubuntu 24.04.4 LTS.
+
+A standalone GNOME Shell extension that adds two pointer-driven, hold-to-act
+window hotkeys:
+
+- **Move (`<Alt><Super>W`)** — hold the chord and the focused window follows the
+  pointer. The drag ends the moment you release Super (a left-button click also
+  ends it). The window is clamped inside the monitor work area.
+- **Resize (`<Alt><Super>E`)** — hold the chord and the focused window scales
+  about its pinned center as the pointer moves: its half width tracks the
+  pointer's horizontal offset from the center and its half height tracks the
+  vertical offset, so moving outward enlarges and moving back shrinks, on both
+  axes at once. Scaling ends when you release Super (a mouse click or Escape
+  also ends it).
+
+Both features were previously part of the `linux_hotkey_setup`
+`monitor-window-hotkeys@local` extension and now live here so they can be
+installed on their own. `linux_hotkey_setup` installs this repository by default
+when it sits beside it in the projects directory.
+
+## Technology Stack
+
+- A GNOME Shell extension (`extension.js`) implementing the two hold-to-act
+  pointer gestures and their lifecycle.
+- A Bash installer for GNOME Shell extension installation and gsettings binding
+  setup, following the root-optional (sudo-free) installer pattern.
+
+## Installation
+
+```bash
+bash install.sh        # sudo-free, run as the desktop user
+sudo bash install.sh   # also supported (used by the clean-install chain)
+```
+
+The installer copies the extension into
+`~/.local/share/gnome-shell/extensions/window-move-resize@local`, compiles its
+gsettings schema, applies the `<Alt><Super>W` / `<Alt><Super>E` binding
+defaults, frees GNOME's default `toggle-maximized` binding on `<Alt><Super>E`,
+and enables the extension.
+
+After installation, log out and back in before testing GNOME Shell extension
+changes. Do not reload GNOME Shell extensions from an active Wayland session.
+
+## Configuration
+
+The two keybindings live in the extension schema defaults
+(`schemas/org.gnome.shell.extensions.window-move-resize.gschema.xml`):
+
+- `drag-active-window-with-pointer` → `['<Alt><Super>W']`
+- `scale-active-window-from-center` → `['<Alt><Super>E']`
+
+Override them per user with `gsettings`:
+
+```bash
+gsettings set org.gnome.shell.extensions.window-move-resize \
+  scale-active-window-from-center "['<Alt><Super>R']"
+```
+
+## Project Structure
+
+- `install.sh` — standalone installer (root-optional).
+- `extension.js` — the GNOME Shell extension (move + resize gestures).
+- `metadata.json` — extension metadata.
+- `schemas/` — gsettings schema and compiled binary.
+
+## Deployment
+
+```bash
+bash -n install.sh
+sudo bash install.sh
+```
 
 ## Disclaimer
 
