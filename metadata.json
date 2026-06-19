@@ -1,0 +1,8 @@
+{
+  "uuid": "window-move-resize@local",
+  "name": "Window Move & Resize",
+  "description": "Hold a hotkey to drag the focused window with the pointer, or to scale it about its center with the pointer",
+  "settings-schema": "org.gnome.shell.extensions.window-move-resize",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "version": 1
+}
