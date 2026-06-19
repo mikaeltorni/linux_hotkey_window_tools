@@ -434,15 +434,17 @@ function stopCenterScale(state) {
 /**
  * Begin scaling the focused window about its center with the pointer.
  *
- * Warps the pointer to the window's center and pins that center in place, then
- * installs a periodic timeout (POINTER_POLL_INTERVAL_MS) that resizes the
- * window to track the pointer's offset from that center on both axes: the
- * window's half width follows |pointerX - centerX| and its half height follows
- * |pointerY - centerY|. Because the pointer starts at the center, the window
- * begins at its minimum size and grows as the pointer moves outward, shrinks as
- * it moves back, on both axes independently and simultaneously. The size is
- * clamped to MIN_WINDOW_WIDTH/HEIGHT and to the largest extent that keeps the
- * window inside the work area around that fixed center.
+ * Pins the window's current center in place and warps the pointer to the
+ * window's bottom-right corner, then installs a periodic timeout
+ * (POINTER_POLL_INTERVAL_MS) that resizes the window to track the pointer's
+ * offset from that center on both axes: the window's half width follows
+ * |pointerX - centerX| and its half height follows |pointerY - centerY|.
+ * Because the pointer starts half a frame away from the center on each axis,
+ * the window keeps its current size when the resize begins and only changes
+ * once the pointer moves — outward to enlarge, back toward the center to
+ * shrink, on both axes independently and simultaneously. The size is clamped to
+ * MIN_WINDOW_WIDTH/HEIGHT and to the largest extent that keeps the window
+ * inside the work area around that fixed center.
  *
  * Scaling stays active only while Super is held (the chord is held down) and
  * ends as soon as Super is released; it also ends via stopCenterScale() on a
@@ -474,7 +476,16 @@ function startCenterScale(state) {
     // chord settling on the first poll cannot end scaling immediately.
     state.armed = false;
     raiseWindow(win);
-    warpPointer(state.centerX, state.centerY);
+    // Warp the pointer to the window's bottom-right corner rather than its
+    // center. Because the size tracks twice the pointer's offset from the
+    // pinned center (width = 2 * |pointerX - centerX|), placing the pointer
+    // half a frame away on each axis makes the initial computed size equal the
+    // window's current size, so initiating a resize no longer snaps the window
+    // down to the minimum — it stays put until the pointer actually moves.
+    warpPointer(
+      state.centerX + Math.round(frame.width / 2),
+      state.centerY + Math.round(frame.height / 2),
+    );
 
     state.timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POINTER_POLL_INTERVAL_MS, () => {
       if (!state || !state.window) {
