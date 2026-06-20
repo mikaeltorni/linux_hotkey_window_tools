@@ -19,6 +19,16 @@ Both features were previously part of the `linux_hotkey_setup`
 installed on their own. `linux_hotkey_setup` installs this repository by default
 when it sits beside it in the projects directory.
 
+## Repository dependencies
+
+This repository installs and runs **standalone** — it has **no** dependency on
+any other setup repository. It is *consumed by* `linux_hotkey_setup`, which
+installs it by default when it sits beside it in the projects directory; that is
+a one-way relationship and does not create a dependency in this direction.
+
+See the full cross-repository map in
+[installation_scripts/DEPENDENCIES.md](https://github.com/mikaeltorni/installation_scripts/blob/master/DEPENDENCIES.md).
+
 ## Technology Stack
 
 - A GNOME Shell extension (`extension.js`) implementing the two hold-to-act
