@@ -13,7 +13,7 @@
  *   - getFocusWindow(): Resolve the focused, user-manageable window.
  *   - startPointerDrag()/stopPointerDrag(): Pointer-driven window dragging.
  *   - startCenterScale()/stopCenterScale(): Pointer-driven scaling about the
- *     window center, keeping the center pinned in place.
+ *     window center from the current size, keeping the center pinned in place.
  *   - WindowMoveResizeExtension: Extension lifecycle (enable/disable).
  */
 import Meta from 'gi://Meta';
@@ -379,28 +379,6 @@ function startPointerDrag(state) {
 }
 
 /**
- * Warp the pointer to an absolute screen position.
- *
- * Used to recenter the pointer on the window before center scaling so the
- * scale tracks the pointer's offset from that center. No-ops (logging only)
- * when the backend does not expose a warpable seat.
- *
- * @param {number} x Absolute X coordinate to move the pointer to.
- * @param {number} y Absolute Y coordinate to move the pointer to.
- * @returns {void}
- */
-function warpPointer(x, y) {
-  try {
-    const seat = global.backend?.get_default_seat?.();
-    if (seat && typeof seat.warp_pointer === 'function') {
-      seat.warp_pointer(x, y);
-    }
-  } catch (error) {
-    console.error(`window-move-resize: failed to warp pointer: ${error}`);
-  }
-}
-
-/**
  * Stop an in-progress center scale and settle the window in place.
  *
  * Cancels the scale timeout, raises the window, and clears the scale state.
@@ -434,17 +412,14 @@ function stopCenterScale(state) {
 /**
  * Begin scaling the focused window about its center with the pointer.
  *
- * Pins the window's current center in place and warps the pointer to the
- * window's bottom-right corner, then installs a periodic timeout
- * (POINTER_POLL_INTERVAL_MS) that resizes the window to track the pointer's
- * offset from that center on both axes: the window's half width follows
- * |pointerX - centerX| and its half height follows |pointerY - centerY|.
- * Because the pointer starts half a frame away from the center on each axis,
- * the window keeps its current size when the resize begins and only changes
- * once the pointer moves — outward to enlarge, back toward the center to
- * shrink, on both axes independently and simultaneously. The size is clamped to
- * MIN_WINDOW_WIDTH/HEIGHT and to the largest extent that keeps the window
- * inside the work area around that fixed center.
+ * Pins the window's current center in place and records the current frame size
+ * plus the pointer's starting offset from that center. The periodic timeout
+ * (POINTER_POLL_INTERVAL_MS) then grows or shrinks the window from that
+ * starting size by the change in pointer offset: moving farther from the pinned
+ * center enlarges, moving back toward it shrinks, on both axes independently and
+ * simultaneously. The size is clamped to MIN_WINDOW_WIDTH/HEIGHT and to the
+ * largest extent that keeps the window inside the work area around that fixed
+ * center.
  *
  * Scaling stays active only while Super is held (the chord is held down) and
  * ends as soon as Super is released; it also ends via stopCenterScale() on a
@@ -452,7 +427,9 @@ function stopCenterScale(state) {
  * move/resized. Errors are logged.
  *
  * @param {{timeoutId: ?number, window: ?Meta.Window, centerX: number,
- *   centerY: number, armed: boolean}} state Center scale state to populate.
+ *   centerY: number, startWidth: number, startHeight: number,
+ *   pointerOffsetX: number, pointerOffsetY: number, armed: boolean}} state
+ *   Center scale state to populate.
  * @returns {void}
  */
 function startCenterScale(state) {
@@ -469,23 +446,18 @@ function startCenterScale(state) {
     prepareWindowForMoveResize(win);
 
     const frame = win.get_frame_rect();
+    const [pointerX, pointerY] = global.get_pointer();
     state.window = win;
     state.centerX = Math.round(frame.x + frame.width / 2);
     state.centerY = Math.round(frame.y + frame.height / 2);
+    state.startWidth = frame.width;
+    state.startHeight = frame.height;
+    state.pointerOffsetX = Math.abs(pointerX - state.centerX);
+    state.pointerOffsetY = Math.abs(pointerY - state.centerY);
     // Only stop on Super release once we have actually seen Super held, so the
     // chord settling on the first poll cannot end scaling immediately.
     state.armed = false;
     raiseWindow(win);
-    // Warp the pointer to the window's bottom-right corner rather than its
-    // center. Because the size tracks twice the pointer's offset from the
-    // pinned center (width = 2 * |pointerX - centerX|), placing the pointer
-    // half a frame away on each axis makes the initial computed size equal the
-    // window's current size, so initiating a resize no longer snaps the window
-    // down to the minimum — it stays put until the pointer actually moves.
-    warpPointer(
-      state.centerX + Math.round(frame.width / 2),
-      state.centerY + Math.round(frame.height / 2),
-    );
 
     state.timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POINTER_POLL_INTERVAL_MS, () => {
       if (!state || !state.window) {
@@ -513,11 +485,13 @@ function startCenterScale(state) {
         return GLib.SOURCE_REMOVE;
       }
 
-      // The window spans twice the pointer's offset from the pinned center on
-      // each axis, so moving the pointer outward grows it and moving it back
-      // shrinks it, horizontally and vertically at once.
-      let width = 2 * Math.abs(pointerX - state.centerX);
-      let height = 2 * Math.abs(pointerY - state.centerY);
+      // Start from the frame size captured when the hotkey was pressed. Only
+      // the change in pointer offset changes the size, so initialization cannot
+      // collapse the window even when pointer warping is unavailable.
+      const pointerOffsetX = Math.abs(pointerX - state.centerX);
+      const pointerOffsetY = Math.abs(pointerY - state.centerY);
+      let width = state.startWidth + 2 * (pointerOffsetX - state.pointerOffsetX);
+      let height = state.startHeight + 2 * (pointerOffsetY - state.pointerOffsetY);
 
       // Largest half-size that keeps the window inside the work area while its
       // center stays fixed, so growing never nudges the pinned center.
@@ -570,6 +544,10 @@ export default class WindowMoveResizeExtension extends Extension {
       window: null,
       centerX: 0,
       centerY: 0,
+      startWidth: 0,
+      startHeight: 0,
+      pointerOffsetX: 0,
+      pointerOffsetY: 0,
       armed: false,
     };
 

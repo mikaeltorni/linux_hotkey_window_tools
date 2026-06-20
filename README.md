@@ -9,11 +9,10 @@ window hotkeys:
   pointer. The drag ends the moment you release Super (a left-button click also
   ends it). The window is clamped inside the monitor work area.
 - **Resize (`<Alt><Super>E`)** — hold the chord and the focused window scales
-  about its pinned center as the pointer moves: its half width tracks the
-  pointer's horizontal offset from the center and its half height tracks the
-  vertical offset, so moving outward enlarges and moving back shrinks, on both
-  axes at once. Scaling ends when you release Super (a mouse click or Escape
-  also ends it).
+  about its pinned center from its current size. Moving the pointer farther from
+  the center enlarges the window, and moving it back toward the center shrinks it,
+  on both axes at once. Scaling ends when you release Super (a mouse click or
+  Escape also ends it).
 
 Both features were previously part of the `linux_hotkey_setup`
 `monitor-window-hotkeys@local` extension and now live here so they can be
