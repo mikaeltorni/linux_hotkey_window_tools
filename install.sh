@@ -58,24 +58,7 @@ run_as_target() {
 append_strv_value() {
   local schema="$1" key="$2" value="$3" current new_value
   current="$(run_as_target gsettings get "$schema" "$key" 2>/dev/null || printf '[]')"
-  new_value="$(CURRENT="$current" VALUE="$value" python3 - <<'PY'
-import ast, os
-raw = os.environ.get("CURRENT", "").strip()
-if raw.startswith("@as "):
-    raw = raw[4:].strip()
-try:
-    current = ast.literal_eval(raw) if raw else []
-except Exception:
-    current = []
-if not isinstance(current, list):
-    current = []
-current = list(dict.fromkeys(str(item) for item in current))
-value = os.environ.get("VALUE", "")
-if value and value not in current:
-    current.append(value)
-print("[" + ", ".join(repr(str(item)) for item in current) + "]")
-PY
-)"
+  new_value="$(CURRENT="$current" python3 "$SCRIPT_DIR/lib/gsettings_strv.py" append "$value")"
   run_as_target gsettings set "$schema" "$key" "$new_value"
 }
 
@@ -85,22 +68,7 @@ PY
 remove_strv_value() {
   local schema="$1" key="$2" value="$3" current new_value
   current="$(run_as_target gsettings get "$schema" "$key" 2>/dev/null || printf '[]')"
-  new_value="$(CURRENT="$current" VALUE="$value" python3 - <<'PY'
-import ast, os
-raw = os.environ.get("CURRENT", "").strip()
-if raw.startswith("@as "):
-    raw = raw[4:].strip()
-try:
-    current = ast.literal_eval(raw) if raw else []
-except Exception:
-    current = []
-if not isinstance(current, list):
-    current = []
-value = os.environ.get("VALUE", "")
-current = [str(item) for item in current if str(item) != value]
-print("[" + ", ".join(repr(str(item)) for item in current) + "]")
-PY
-)"
+  new_value="$(CURRENT="$current" python3 "$SCRIPT_DIR/lib/gsettings_strv.py" remove "$value")"
   run_as_target gsettings set "$schema" "$key" "$new_value"
 }
 

@@ -61,6 +61,7 @@ gsettings set org.gnome.shell.extensions.window-move-resize \
 ## Project Structure
 
 - `install.sh` — standalone installer (root-optional).
+- `lib/gsettings_strv.py` — tested string-array helper used by the installer.
 - `extension.js` — the GNOME Shell extension (move + resize gestures).
 - `metadata.json` — extension metadata.
 - `schemas/` — gsettings schema and compiled binary.
@@ -69,6 +70,7 @@ gsettings set org.gnome.shell.extensions.window-move-resize \
 
 ```bash
 bash -n install.sh
+pytest tests/ -v
 sudo bash install.sh
 ```
 
