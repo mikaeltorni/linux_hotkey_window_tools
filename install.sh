@@ -108,6 +108,8 @@ main() {
   install -d "$target_dir/schemas"
   install -m 0644 \
     "$SCRIPT_DIR/extension.js" \
+    "$SCRIPT_DIR/windowUtils.js" \
+    "$SCRIPT_DIR/logger.js" \
     "$SCRIPT_DIR/metadata.json" \
     "$target_dir/"
   install -m 0644 \

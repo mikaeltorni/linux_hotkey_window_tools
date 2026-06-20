@@ -9,11 +9,15 @@
  *     pinned center as the pointer moves, until Super is released (or a mouse
  *     click / Escape).
  *
+ * The reusable, version-spanning window/pointer helpers live in
+ * windowUtils.js and all logging goes through the centralized logger in
+ * logger.js; this file owns the gesture state machines (the polled timeouts)
+ * and the extension lifecycle.
+ *
  * Components:
- *   - getFocusWindow(): Resolve the focused, user-manageable window.
  *   - startPointerDrag()/stopPointerDrag(): Pointer-driven window dragging.
  *   - startCenterScale()/stopCenterScale(): Pointer-driven scaling about the
- *     window center from the current size, keeping the center pinned in place.
+ *     window center, keeping the center pinned in place.
  *   - WindowMoveResizeExtension: Extension lifecycle (enable/disable).
  */
 import Meta from 'gi://Meta';
@@ -22,6 +26,19 @@ import Clutter from 'gi://Clutter';
 import Shell from 'gi://Shell';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
+import { logger } from './logger.js';
+import {
+  getFocusWindow,
+  canMoveWindow,
+  canMoveResizeWindow,
+  prepareWindowForMoveResize,
+  raiseWindow,
+  getWindowWorkArea,
+  warpPointer,
+  pointerDragReleaseEvent,
+  centerScaleEndEvent,
+} from './windowUtils.js';
 
 const POINTER_POLL_INTERVAL_MS = 8;
 const MIN_WINDOW_WIDTH = 160;
@@ -34,217 +51,6 @@ const SUPER_HELD_MASK = Clutter.ModifierType.MOD4_MASK | Clutter.ModifierType.SU
 
 const POINTER_DRAG_KEY = 'drag-active-window-with-pointer';
 const CENTER_SCALE_KEY = 'scale-active-window-from-center';
-
-/**
- * Return the currently focused, user-manageable window.
- *
- * Windows that are absent or marked skip-taskbar (panels, docks, OSDs) are
- * ignored so hotkeys only ever act on real application windows.
- *
- * @returns {Meta.Window|null} The focused window, or null when none qualifies.
- */
-function getFocusWindow() {
-  const win = global.display.focus_window;
-  const skipTaskbar = typeof win?.is_skip_taskbar === 'function'
-    ? win.is_skip_taskbar()
-    : win?.skip_taskbar;
-
-  if (!win || skipTaskbar) {
-    return null;
-  }
-
-  return win;
-}
-
-/**
- * Unmaximize a window across the differing GNOME Shell/Mutter APIs.
- *
- * Newer Mutter exposes get_maximized(); older versions expose the
- * maximizedHorizontally/maximizedVertically flags. Both paths are handled.
- *
- * @param {Meta.Window} win Window to unmaximize.
- * @returns {void}
- */
-function unmaximizeWindow(win) {
-  if (typeof win.get_maximized === 'function') {
-    const maximized = win.get_maximized();
-    if (maximized) {
-      win.unmaximize(maximized);
-    }
-    return;
-  }
-
-  if (win.maximizedHorizontally && typeof win.unmaximize === 'function') {
-    win.unmaximize(Meta.MaximizeFlags.HORIZONTAL);
-  }
-  if (win.maximizedVertically && typeof win.unmaximize === 'function') {
-    win.unmaximize(Meta.MaximizeFlags.VERTICAL);
-  }
-}
-
-/**
- * Report whether a window can be both moved and resized.
- *
- * @param {Meta.Window|null} win Candidate window.
- * @returns {boolean} True when the window supports move_resize_frame and any
- *   available allows_resize()/allows_move() checks pass.
- */
-function canMoveResizeWindow(win) {
-  if (!win || typeof win.move_resize_frame !== 'function') {
-    return false;
-  }
-
-  // Check allows_resize/allows_move only when those methods exist.
-  if (typeof win.allows_resize === 'function' && !win.allows_resize()) {
-    return false;
-  }
-  if (typeof win.allows_move === 'function' && !win.allows_move()) {
-    return false;
-  }
-
-  return true;
-}
-
-/**
- * Report whether a window can be moved (without requiring resize support).
- *
- * @param {Meta.Window|null} win Candidate window.
- * @returns {boolean} True when the window supports move_frame and any available
- *   allows_move() check passes.
- */
-function canMoveWindow(win) {
-  if (!win || typeof win.move_frame !== 'function') {
-    return false;
-  }
-
-  if (typeof win.allows_move === 'function' && !win.allows_move()) {
-    return false;
-  }
-
-  return true;
-}
-
-/**
- * Normalize a window's state so it can be freely positioned/resized.
- *
- * Clears maximized, fullscreen, minimized, and always-on-top states when the
- * corresponding methods are available on this GNOME Shell version.
- *
- * @param {Meta.Window} win Window to prepare.
- * @returns {void}
- */
-function prepareWindowForMoveResize(win) {
-  unmaximizeWindow(win);
-  if (typeof win.unmake_fullscreen === 'function') {
-    win.unmake_fullscreen();
-  }
-  if (typeof win.unminimize === 'function') {
-    win.unminimize();
-  }
-  if (typeof win.unmake_above === 'function') {
-    win.unmake_above();
-  }
-}
-
-/**
- * Raise a window to the top and mark it most-recently-used.
- *
- * Uses the workspace-aware API when present, otherwise falls back to the
- * legacy raise_and_make_recent().
- *
- * @param {Meta.Window} win Window to raise.
- * @returns {void}
- */
-function raiseWindow(win) {
-  if (typeof win.raise_and_make_recent_on_workspace === 'function') {
-    win.raise_and_make_recent_on_workspace(global.workspace_manager.get_active_workspace());
-  } else if (typeof win.raise_and_make_recent === 'function') {
-    win.raise_and_make_recent();
-  }
-}
-
-/**
- * Resolve a valid monitor index for a window.
- *
- * Mutter aborts the entire shell (assertion `which_monitor >= 0` in
- * meta_window_get_work_area_for_monitor) when get_work_area_for_monitor() or
- * move_to_monitor() is called with -1. win.get_monitor() returns -1 while a
- * window is transiently off all monitors, e.g. mid workspace-switch animation.
- * Because that abort is at the C level it cannot be caught with try/catch, so
- * every monitor lookup must be clamped to a usable index here. Falls back to
- * the current monitor and finally returns -1 when no monitor is available, so
- * callers can bail out instead of crashing the shell.
- *
- * @param {Meta.Window} win Window whose monitor is requested.
- * @returns {number} A valid zero-based monitor index, or -1 when none exists.
- */
-function resolveWindowMonitor(win) {
-  const monitorCount = global.display.get_n_monitors();
-  if (monitorCount <= 0) {
-    return -1;
-  }
-
-  let index = typeof win.get_monitor === 'function' ? win.get_monitor() : -1;
-  if (index < 0 || index >= monitorCount) {
-    index = global.display.get_current_monitor();
-  }
-  if (index < 0 || index >= monitorCount) {
-    return -1;
-  }
-
-  return index;
-}
-
-/**
- * Get the usable work area (excluding panels) for a window's monitor.
- *
- * @param {Meta.Window} win Window whose monitor work area is requested.
- * @returns {Meta.Rectangle|null} The work area rectangle for that monitor, or
- *   null when the window is not on any valid monitor.
- */
-function getWindowWorkArea(win) {
-  const monitorIndex = resolveWindowMonitor(win);
-  if (monitorIndex < 0) {
-    return null;
-  }
-
-  return win.get_work_area_for_monitor(monitorIndex);
-}
-
-/**
- * Test whether an event signals the end of a pointer drag.
- *
- * @param {Clutter.Event} event Event received from the captured-event signal.
- * @returns {boolean} True for a primary (left) mouse button release.
- */
-function pointerDragReleaseEvent(event) {
-  if (event.type !== Clutter.EventType.BUTTON_RELEASE) {
-    return false;
-  }
-
-  const button = event.get_button();
-  return button === 1;
-}
-
-/**
- * Test whether an event should finish an active center scale.
- *
- * Center scaling is keyboard-initiated (no button is held), so it ends on any
- * mouse-button press or an Escape key press. These events are consumed by the
- * caller so the click/keypress that finishes scaling does not also reach the
- * underlying window.
- *
- * @param {Clutter.Event} event Event received from the captured-event signal.
- * @returns {boolean} True when the scale should stop.
- */
-function centerScaleEndEvent(event) {
-  if (event.type === Clutter.EventType.BUTTON_PRESS) {
-    return true;
-  }
-
-  return event.type === Clutter.EventType.KEY_PRESS
-    && event.get_key_symbol() === Clutter.KEY_Escape;
-}
 
 /**
  * Stop an in-progress pointer drag and settle the window in place.
@@ -284,8 +90,9 @@ function stopPointerDrag(state) {
 
     win.move_frame(true, x, y);
     raiseWindow(win);
+    logger.info(`pointer drag stopped; window settled at ${x},${y}`);
   } catch (error) {
-    console.error(`window-move-resize: failed to stop pointer drag: ${error}`);
+    logger.error(`failed to stop pointer drag: ${error}`);
   }
 
   state.window = null;
@@ -314,11 +121,13 @@ function startPointerDrag(state) {
   // state.window is still set — and every leaked 8ms source calls move_frame()
   // + raiseWindow(), piling up until the shell is overwhelmed and crashes.
   if (state.timeoutId) {
+    logger.debug('startPointerDrag: drag already active; ignoring re-trigger');
     return;
   }
 
   const win = getFocusWindow();
   if (!canMoveWindow(win)) {
+    logger.debug('startPointerDrag: focused window cannot be moved; ignoring');
     return;
   }
 
@@ -332,6 +141,7 @@ function startPointerDrag(state) {
     // Only auto-stop on Super release once Super has actually been seen held,
     // so the chord settling on the first poll cannot end the drag instantly.
     state.armed = false;
+    logger.info('pointer drag started');
 
     // Start a timeout to handle the drag.
     state.timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POINTER_POLL_INTERVAL_MS, () => {
@@ -354,6 +164,7 @@ function startPointerDrag(state) {
         state.timeoutId = null;
         state.window = null;
         raiseWindow(win);
+        logger.info('pointer drag ended (Super released)');
         return GLib.SOURCE_REMOVE;
       }
 
@@ -374,7 +185,7 @@ function startPointerDrag(state) {
       return GLib.SOURCE_CONTINUE;
     });
   } catch (error) {
-    console.error(`window-move-resize: failed to start pointer drag: ${error}`);
+    logger.error(`failed to start pointer drag: ${error}`);
   }
 }
 
@@ -401,8 +212,9 @@ function stopCenterScale(state) {
   if (win) {
     try {
       raiseWindow(win);
+      logger.info('center scale stopped');
     } catch (error) {
-      console.error(`window-move-resize: failed to stop center scale: ${error}`);
+      logger.error(`failed to stop center scale: ${error}`);
     }
   }
 
@@ -412,14 +224,17 @@ function stopCenterScale(state) {
 /**
  * Begin scaling the focused window about its center with the pointer.
  *
- * Pins the window's current center in place and records the current frame size
- * plus the pointer's starting offset from that center. The periodic timeout
- * (POINTER_POLL_INTERVAL_MS) then grows or shrinks the window from that
- * starting size by the change in pointer offset: moving farther from the pinned
- * center enlarges, moving back toward it shrinks, on both axes independently and
- * simultaneously. The size is clamped to MIN_WINDOW_WIDTH/HEIGHT and to the
- * largest extent that keeps the window inside the work area around that fixed
- * center.
+ * Pins the window's current center in place and warps the pointer to the
+ * window's bottom-right corner, then installs a periodic timeout
+ * (POINTER_POLL_INTERVAL_MS) that resizes the window to track the pointer's
+ * offset from that center on both axes: the window's half width follows
+ * |pointerX - centerX| and its half height follows |pointerY - centerY|.
+ * Because the pointer starts half a frame away from the center on each axis,
+ * the window keeps its current size when the resize begins and only changes
+ * once the pointer moves — outward to enlarge, back toward the center to
+ * shrink, on both axes independently and simultaneously. The size is clamped to
+ * MIN_WINDOW_WIDTH/HEIGHT and to the largest extent that keeps the window
+ * inside the work area around that fixed center.
  *
  * Scaling stays active only while Super is held (the chord is held down) and
  * ends as soon as Super is released; it also ends via stopCenterScale() on a
@@ -427,9 +242,7 @@ function stopCenterScale(state) {
  * move/resized. Errors are logged.
  *
  * @param {{timeoutId: ?number, window: ?Meta.Window, centerX: number,
- *   centerY: number, startWidth: number, startHeight: number,
- *   pointerOffsetX: number, pointerOffsetY: number, armed: boolean}} state
- *   Center scale state to populate.
+ *   centerY: number, armed: boolean}} state Center scale state to populate.
  * @returns {void}
  */
 function startCenterScale(state) {
@@ -439,6 +252,7 @@ function startCenterScale(state) {
 
   const win = getFocusWindow();
   if (!canMoveResizeWindow(win)) {
+    logger.debug('startCenterScale: focused window cannot be resized; ignoring');
     return;
   }
 
@@ -446,18 +260,24 @@ function startCenterScale(state) {
     prepareWindowForMoveResize(win);
 
     const frame = win.get_frame_rect();
-    const [pointerX, pointerY] = global.get_pointer();
     state.window = win;
     state.centerX = Math.round(frame.x + frame.width / 2);
     state.centerY = Math.round(frame.y + frame.height / 2);
-    state.startWidth = frame.width;
-    state.startHeight = frame.height;
-    state.pointerOffsetX = Math.abs(pointerX - state.centerX);
-    state.pointerOffsetY = Math.abs(pointerY - state.centerY);
     // Only stop on Super release once we have actually seen Super held, so the
     // chord settling on the first poll cannot end scaling immediately.
     state.armed = false;
     raiseWindow(win);
+    // Warp the pointer to the window's bottom-right corner rather than its
+    // center. Because the size tracks twice the pointer's offset from the
+    // pinned center (width = 2 * |pointerX - centerX|), placing the pointer
+    // half a frame away on each axis makes the initial computed size equal the
+    // window's current size, so initiating a resize no longer snaps the window
+    // down to the minimum — it stays put until the pointer actually moves.
+    warpPointer(
+      state.centerX + Math.round(frame.width / 2),
+      state.centerY + Math.round(frame.height / 2),
+    );
+    logger.info(`center scale started; center pinned at ${state.centerX},${state.centerY}`);
 
     state.timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POINTER_POLL_INTERVAL_MS, () => {
       if (!state || !state.window) {
@@ -482,16 +302,15 @@ function startCenterScale(state) {
         state.timeoutId = null;
         state.window = null;
         raiseWindow(win);
+        logger.info('center scale ended (Super released)');
         return GLib.SOURCE_REMOVE;
       }
 
-      // Start from the frame size captured when the hotkey was pressed. Only
-      // the change in pointer offset changes the size, so initialization cannot
-      // collapse the window even when pointer warping is unavailable.
-      const pointerOffsetX = Math.abs(pointerX - state.centerX);
-      const pointerOffsetY = Math.abs(pointerY - state.centerY);
-      let width = state.startWidth + 2 * (pointerOffsetX - state.pointerOffsetX);
-      let height = state.startHeight + 2 * (pointerOffsetY - state.pointerOffsetY);
+      // The window spans twice the pointer's offset from the pinned center on
+      // each axis, so moving the pointer outward grows it and moving it back
+      // shrinks it, horizontally and vertically at once.
+      let width = 2 * Math.abs(pointerX - state.centerX);
+      let height = 2 * Math.abs(pointerY - state.centerY);
 
       // Largest half-size that keeps the window inside the work area while its
       // center stays fixed, so growing never nudges the pinned center.
@@ -511,7 +330,7 @@ function startCenterScale(state) {
       return GLib.SOURCE_CONTINUE;
     });
   } catch (error) {
-    console.error(`window-move-resize: failed to start center scale: ${error}`);
+    logger.error(`failed to start center scale: ${error}`);
   }
 }
 
@@ -544,10 +363,6 @@ export default class WindowMoveResizeExtension extends Extension {
       window: null,
       centerX: 0,
       centerY: 0,
-      startWidth: 0,
-      startHeight: 0,
-      pointerOffsetX: 0,
-      pointerOffsetY: 0,
       armed: false,
     };
 
@@ -594,6 +409,8 @@ export default class WindowMoveResizeExtension extends Extension {
       },
     );
     this._keybindings.push(CENTER_SCALE_KEY);
+
+    logger.info('extension enabled (Alt+Super+W move, Alt+Super+E resize)');
   }
 
   /**
@@ -626,5 +443,6 @@ export default class WindowMoveResizeExtension extends Extension {
     }
 
     this._settings = null;
+    logger.info('extension disabled');
   }
 }
