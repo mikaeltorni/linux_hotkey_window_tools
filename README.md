@@ -61,9 +61,18 @@ gsettings set org.gnome.shell.extensions.window-move-resize \
 
 - `install.sh` — standalone installer (root-optional).
 - `lib/gsettings_strv.py` — tested string-array helper used by the installer.
-- `extension.js` — the GNOME Shell extension (move + resize gestures).
+- `lib/log_utils.py` — centralized file logger for the installer-side helpers
+  (writes to `.log/`).
+- `extension.js` — the GNOME Shell extension entry point and gesture state
+  machines (move + resize).
+- `windowUtils.js` — reusable, version-spanning window/pointer helpers used by
+  `extension.js`.
+- `logger.js` — centralized leveled logger for the extension (routes to the
+  systemd journal).
 - `metadata.json` — extension metadata.
 - `schemas/` — gsettings schema and compiled binary.
+- `tests/` — pytest suite for the Python helpers.
+- `.log/` — runtime logs from the installer helpers (git-ignored).
 
 ## Deployment
 
