@@ -70,9 +70,11 @@ gsettings set org.gnome.shell.extensions.window-move-resize \
 ## Project Structure
 
 - `install.sh` — standalone installer (root-optional).
+- `lib/bash_logging.sh` — centralized best-effort file logger for the Bash
+  installer (writes to `.log/install.log`).
 - `lib/gsettings_strv.py` — tested string-array helper used by the installer.
-- `lib/log_utils.py` — centralized file logger for the installer-side helpers
-  (writes to `.log/`).
+- `lib/log_utils.py` — centralized Python file logger and call-tracing
+  decorator for installer-side helpers (writes to `.log/`).
 - `extension.js` — the GNOME Shell extension entry point and gesture state
   machines (move + resize).
 - `windowUtils.js` — reusable, version-spanning window/pointer helpers used by
@@ -81,8 +83,8 @@ gsettings set org.gnome.shell.extensions.window-move-resize \
   systemd journal).
 - `metadata.json` — extension metadata.
 - `schemas/` — gsettings schema and compiled binary.
-- `tests/` — pytest suite for the Python helpers.
-- `.log/` — runtime logs from the installer helpers (git-ignored).
+- `tests/` — pytest suite for the Python helpers and static installer checks.
+- `.log/` — runtime logs from installer code and helpers (git-ignored).
 
 ## Deployment
 
