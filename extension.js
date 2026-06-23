@@ -250,6 +250,13 @@ function startCenterScale(state) {
     return;
   }
 
+  // Match pointer drag's re-entry behavior: a held or repeated chord must not
+  // stack a second 8ms resize timeout on top of the active gesture.
+  if (state.timeoutId) {
+    logger.debug('startCenterScale: scale already active; ignoring re-trigger');
+    return;
+  }
+
   const win = getFocusWindow();
   if (!canMoveResizeWindow(win)) {
     logger.debug('startCenterScale: focused window cannot be resized; ignoring');
