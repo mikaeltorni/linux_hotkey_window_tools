@@ -26,9 +26,9 @@ import ast
 import os
 import sys
 
-from log_utils import get_logger
+from log_utils import get_logger, log_call
 
-_log = get_logger()
+LOGGER = get_logger("gsettings_strv", "gsettings_strv.log")
 
 
 def parse_strv(raw: str | None) -> list[str]:
@@ -53,11 +53,11 @@ def parse_strv(raw: str | None) -> list[str]:
     try:
         parsed = ast.literal_eval(value) if value else []
     except (SyntaxError, ValueError):
-        _log.warning("parse_strv: could not parse gsettings array: %r", raw)
+        LOGGER.warning("could not parse gsettings array: %r", raw)
         return []
 
     if not isinstance(parsed, list):
-        _log.warning("parse_strv: parsed value is not a list: %r", raw)
+        LOGGER.warning("parsed gsettings value is not a list: %r", raw)
         return []
 
     return [str(item) for item in parsed]
@@ -89,9 +89,9 @@ def append_strv(raw: str | None, value: str) -> list[str]:
     current = unique_values(parse_strv(raw))
     if value and value not in current:
         current.append(value)
-        _log.debug("append_strv: added %r -> %r", value, current)
+        LOGGER.debug("added gsettings strv value %r -> %r", value, current)
     else:
-        _log.debug("append_strv: %r already present; unchanged", value)
+        LOGGER.debug("gsettings strv value %r already present; unchanged", value)
     return current
 
 
@@ -107,7 +107,7 @@ def remove_strv(raw: str | None, value: str) -> list[str]:
         ``value`` removed.
     """
     result = [item for item in parse_strv(raw) if item != value]
-    _log.debug("remove_strv: removed %r -> %r", value, result)
+    LOGGER.debug("removed gsettings strv value %r -> %r", value, result)
     return result
 
 
@@ -123,6 +123,7 @@ def format_strv(values: list[str]) -> str:
     return "[" + ", ".join(repr(str(item)) for item in values) + "]"
 
 
+@log_call(LOGGER)
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint used by ``install.sh``.
 
@@ -139,13 +140,13 @@ def main(argv: list[str] | None = None) -> int:
     """
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 2 or args[0] not in {"append", "remove"}:
-        _log.error("main: invalid usage: %r", args)
+        LOGGER.error("invalid gsettings_strv usage: %r", args)
         print("Usage: gsettings_strv.py append|remove <value>", file=sys.stderr)
         return 2
 
     action, value = args
     current = os.environ.get("CURRENT", "")
-    _log.info("main: %s %r against current=%r", action, value, current)
+    LOGGER.info("applying %s for gsettings strv value %r", action, value)
     result = append_strv(current, value) if action == "append" else remove_strv(current, value)
     print(format_strv(result))
     return 0
