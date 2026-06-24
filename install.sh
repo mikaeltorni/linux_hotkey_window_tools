@@ -1,157 +1,101 @@
 #!/usr/bin/env bash
 # install.sh — Install the Window Move & Resize GNOME Shell extension.
 #
-# Copies the extension into the target user's local GNOME Shell extensions
-# directory, compiles its gsettings schema, applies the move/resize keybinding
-# defaults, frees GNOME's conflicting <Alt><Super>E toggle-maximized binding,
-# and enables the extension. Runs sudo-free as the desktop user, and also works
-# through sudo (deriving the target from SUDO_USER) for the clean-install chain.
+# The extension is the always-installed core: its files and compiled gsettings
+# schema are copied into the target user's local GNOME Shell extensions
+# directory and the extension is enabled, so the program works no matter which
+# hotkeys the user picks. Each hotkey (move, resize) is an optional, default-on,
+# fully customizable component routed through the shared component framework. A
+# selected hotkey's accelerator is taken from its environment variable
+# (MOVE_HOTKEY / RESIZE_HOTKEY), or prompted on a terminal, or defaulted; only
+# the GNOME default bindings that collide with a chosen accelerator are freed.
 #
-# Functions:
-#   run_as_target           - run a command in the target user's session env.
-#   append_strv_value       - add a value to a gsettings string-array key.
-#   remove_strv_value       - drop a value from a gsettings string-array key.
-#   enable_shell_extension  - add the extension uuid to enabled-extensions.
-#   main                    - orchestrate the full installation.
+# Runs sudo-free as the desktop user, and also through sudo (deriving the target
+# from SUDO_USER) for the clean-install chain.
+#
+# Components:
+#   - main(): install the extension core, then apply the selected hotkeys.
 #
 # Usage:
-#   bash install.sh         # sudo-free, run as the desktop user
-#   sudo bash install.sh    # also supported (clean-install chain)
+#   bash install.sh                    # interactive on a TTY, else default-on set
+#   bash install.sh --default          # all default-on components, no prompts
+#   bash install.sh --all              # every component, no prompts
+#   bash install.sh --select a,b       # exactly these component ids
+#   bash install.sh --list-components  # id<TAB>label<TAB>default (side-effect free)
+#   MOVE_HOTKEY=control+t bash install.sh --default   # customize accelerators
+#   sudo bash install.sh               # also supported (clean-install chain)
 set -euo pipefail
 
-EXTENSION_ID="window-move-resize@local"
-SCHEMA_ID="org.gnome.shell.extensions.window-move-resize"
-WM_SCHEMA="org.gnome.desktop.wm.keybindings"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=lib/bash_logging.sh
 source "$SCRIPT_DIR/lib/bash_logging.sh"
 
-# GNOME default bindings that collide with this extension's chords and must be
-# released so the extension owns them. Format: "key:accelerator".
-WM_UNBINDINGS=(
-  "toggle-maximized:<Alt><Super>E"
-)
-
-# Run a command inside the target user's session environment (HOME, D-Bus,
-# display, runtime dir). Executes directly when already that user, otherwise
-# re-enters through `sudo -H -u`.
-# Arguments: $@ - the command and its arguments to execute.
-# Returns: the wrapped command's exit status.
-run_as_target() {
-  local -a environment=(
-    "HOME=$TARGET_HOME"
-    "USER=$TARGET_USER"
-    "LOGNAME=$TARGET_USER"
-    "XDG_RUNTIME_DIR=$RUNTIME_DIR"
-    "DBUS_SESSION_BUS_ADDRESS=$USER_BUS"
-    "DISPLAY=$DISPLAY_VALUE"
-  )
-
-  if [[ "$(id -u)" -eq "$TARGET_UID" ]]; then
-    install_log_info "run_as_target direct: $*"
-    env "${environment[@]}" "$@"
+# Load the shared component framework + install-time helpers (single source of
+# truth in linux_installation_scripts_functions) before the hotkey library,
+# which uses run_as_target/msg/need_cmd. No vendored copy: resolve a sibling
+# checkout or download on demand so the installer still works standalone.
+for __isc_d in "${ISC_FUNCTIONS_DIR:-}" \
+               "$SCRIPT_DIR/../linux_installation_scripts_functions" \
+               "$HOME/projects/linux_installation_scripts_functions"; do
+  [ -n "$__isc_d" ] && [ -f "$__isc_d/component_loader.sh" ] && { source "$__isc_d/component_loader.sh"; break; }
+done
+if ! declare -F isc_load_helpers >/dev/null 2>&1; then
+  __isc_loader_url="https://raw.githubusercontent.com/mikaeltorni/linux_installation_scripts_functions/${ISC_FUNCTIONS_REF:-master}/component_loader.sh"
+  __isc_loader_tmp="$(mktemp)"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$__isc_loader_url" -o "$__isc_loader_tmp"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$__isc_loader_tmp" "$__isc_loader_url"
   else
-    install_log_info "run_as_target sudo as $TARGET_USER: $*"
-    sudo -H -u "$TARGET_USER" env "${environment[@]}" "$@"
+    printf 'ERROR: curl or wget is required to download the shared installer framework.\n' >&2
+    exit 1
   fi
-}
+  source "$__isc_loader_tmp"
+  rm -f "$__isc_loader_tmp"
+fi
+isc_load_helpers
+isc_activate_components
 
-# Add a value to a gsettings string-array key, de-duplicating existing entries.
-# Arguments: $1 - schema, $2 - key, $3 - value to ensure present.
-# Returns: 0.
-append_strv_value() {
-  local schema="$1" key="$2" value="$3" current new_value
-  install_log_info "ensuring gsettings value '$value' is present at $schema $key"
-  current="$(run_as_target gsettings get "$schema" "$key" 2>/dev/null || printf '[]')"
-  new_value="$(CURRENT="$current" python3 "$SCRIPT_DIR/lib/gsettings_strv.py" append "$value")"
-  run_as_target gsettings set "$schema" "$key" "$new_value"
-}
+# shellcheck source=lib/hotkey_tools.sh
+source "$SCRIPT_DIR/lib/hotkey_tools.sh"
+# shellcheck source=installer/components.sh
+source "$SCRIPT_DIR/installer/components.sh"
 
-# Drop a value from a gsettings string-array key.
-# Arguments: $1 - schema, $2 - key, $3 - value to remove.
-# Returns: 0.
-remove_strv_value() {
-  local schema="$1" key="$2" value="$3" current new_value
-  install_log_info "ensuring gsettings value '$value' is absent at $schema $key"
-  current="$(run_as_target gsettings get "$schema" "$key" 2>/dev/null || printf '[]')"
-  new_value="$(CURRENT="$current" python3 "$SCRIPT_DIR/lib/gsettings_strv.py" remove "$value")"
-  run_as_target gsettings set "$schema" "$key" "$new_value"
-}
-
-# Add the extension uuid to org.gnome.shell enabled-extensions.
-# Arguments: none (uses EXTENSION_ID).
-# Returns: 0.
-enable_shell_extension() {
-  install_log_info "enabling extension $EXTENSION_ID"
-  run_as_target gsettings set org.gnome.shell disable-user-extensions false
-  append_strv_value org.gnome.shell enabled-extensions "$EXTENSION_ID"
-  if ! run_as_target gnome-extensions enable "$EXTENSION_ID" 2>/dev/null; then
-    install_log_warn "gnome-extensions enable failed or extension is not visible yet: $EXTENSION_ID"
-  fi
-}
-
-# Orchestrate the installation: resolve the target user, copy extension files,
-# compile the schema, apply binding defaults, free conflicting bindings, and
-# enable the extension.
-# Arguments: none.
-# Returns: 0 on success; 1 on environment errors.
-main() {
+# Populate the target user's desktop-session environment for run_as_target.
+# Component discovery/help is handled before this function runs so those
+# side-effect-free modes do not depend on the caller's desktop user.
+initialize_target_user() {
   TARGET_USER="${SUDO_USER:-${TARGET_USER:-$USER}}"
-  install_log_info "starting install for target user '$TARGET_USER'"
   if [[ -z "$TARGET_USER" || "$TARGET_USER" == "root" ]]; then
     install_log_error "target user is missing or root; refusing user-level install"
     printf 'Set TARGET_USER or run through sudo from the desktop user.\n' >&2
     return 1
   fi
-
   TARGET_UID="$(id -u "$TARGET_USER")"
   TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
   RUNTIME_DIR="/run/user/$TARGET_UID"
   USER_BUS="unix:path=$RUNTIME_DIR/bus"
-  DISPLAY_VALUE="${DISPLAY:-:0}"
-  local target_dir="$TARGET_HOME/.local/share/gnome-shell/extensions/$EXTENSION_ID"
-
-  command -v glib-compile-schemas >/dev/null 2>&1 || {
-    install_log_error "glib-compile-schemas command is missing"
-    printf 'glib-compile-schemas is required (package: libglib2.0-bin).\n' >&2
-    return 1
-  }
-
-  install_log_info "installing extension files to $target_dir"
-  install -d "$target_dir/schemas"
-  install -m 0644 \
-    "$SCRIPT_DIR/extension.js" \
-    "$SCRIPT_DIR/windowUtils.js" \
-    "$SCRIPT_DIR/logger.js" \
-    "$SCRIPT_DIR/metadata.json" \
-    "$target_dir/"
-  install -m 0644 \
-    "$SCRIPT_DIR/schemas/org.gnome.shell.extensions.window-move-resize.gschema.xml" \
-    "$target_dir/schemas/"
-  glib-compile-schemas --strict "$target_dir/schemas"
-  if [[ "$(id -u)" -eq 0 ]]; then
-    install_log_info "fixing ownership of $target_dir for $TARGET_USER"
-    chown -R "$TARGET_USER:$TARGET_USER" "$target_dir"
-  fi
-
-  # Apply the extension's own keybinding defaults (Alt+Super+W move,
-  # Alt+Super+E resize) from the freshly compiled schema.
-  install_log_info "resetting extension gsettings schema $SCHEMA_ID"
-  run_as_target gsettings --schemadir "$target_dir/schemas" reset-recursively "$SCHEMA_ID"
-
-  # Free GNOME defaults that would otherwise shadow our chords.
-  local entry key value
-  for entry in "${WM_UNBINDINGS[@]}"; do
-    key="${entry%%:*}"
-    value="${entry#*:}"
-    remove_strv_value "$WM_SCHEMA" "$key" "$value"
-  done
-
-  enable_shell_extension
-  install_log_info "installed $EXTENSION_ID successfully"
-  printf 'Installed %s (Alt+Super+W move, Alt+Super+E resize).\n' "$EXTENSION_ID"
-  printf 'Log out and back in if GNOME Shell has not loaded the extension.\n'
+  DISPLAY_VAL="${DISPLAY:-:0}"
 }
+
+# Orchestrate the install: always install the extension core, then route the
+# selected hotkey components through the framework.
+main() {
+  initialize_target_user
+  install_log_info "starting install for target user '$TARGET_USER'"
+  install_extension_core
+  clear_component_hotkeys
+  component_main "$@"
+  install_log_info "installed $EXTENSION_ID successfully"
+  msg "Installed $EXTENSION_ID. Log out and back in if GNOME Shell has not loaded the extension."
+}
+
+# Listing/help must print only their own output (the master installer parses
+# --list-components) and stay side-effect free: handle them before the core
+# install runs.
+case "${1:-}" in
+  --list-components|--help|-h) component_main "$@"; exit $? ;;
+esac
 
 main "$@"

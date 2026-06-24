@@ -14,6 +14,12 @@ window hotkeys:
   on both axes at once. Scaling ends when you release Super (a mouse click or
   Escape also ends it).
 
+The extension itself is the **always-installed core**: it is installed and
+enabled no matter which hotkeys you select, with no implicit accelerator owned by
+the core. Each hotkey is an **optional, default-on, fully customizable module** —
+you pick the accelerator and the installer only frees the GNOME defaults that
+collide with the chord you actually chose.
+
 Both features were previously part of the `linux_hotkey_setup`
 `monitor-window-hotkeys@local` extension and now live here so they can be
 installed on their own. `linux_hotkey_setup` installs this repository by default
@@ -33,34 +39,72 @@ See the full cross-repository map in
 
 - A GNOME Shell extension (`extension.js`) implementing the two hold-to-act
   pointer gestures and their lifecycle.
-- A Bash installer for GNOME Shell extension installation and gsettings binding
-  setup, following the root-optional (sudo-free) installer pattern.
+- A Bash installer built on the shared component framework
+  (`linux_installation_scripts_functions`), following the root-optional
+  (sudo-free) installer pattern.
 
 ## Installation
 
 ```bash
-bash install.sh        # sudo-free, run as the desktop user
+bash install.sh        # interactive on a terminal, else the default-on set
 sudo bash install.sh   # also supported (used by the clean-install chain)
 ```
 
-The installer copies the extension into
-`~/.local/share/gnome-shell/extensions/window-move-resize@local`, compiles its
-gsettings schema, applies the `<Alt><Super>W` / `<Alt><Super>E` binding
-defaults, frees GNOME's default `toggle-maximized` binding on `<Alt><Super>E`,
-and enables the extension.
+The extension core (files + compiled gsettings schema, enabled) installs into
+`~/.local/share/gnome-shell/extensions/window-move-resize@local` regardless of
+which hotkeys you select. During each install run, component-owned bindings are
+cleared first; each selected hotkey then has its accelerator applied, and any
+GNOME default binding that collides with that accelerator is freed.
 
 After installation, log out and back in before testing GNOME Shell extension
 changes. Do not reload GNOME Shell extensions from an active Wayland session.
 
+### Selecting components
+
+The installer exposes each hotkey as an independently selectable component
+through the shared framework:
+
+```bash
+bash install.sh --list-components     # id<TAB>label<TAB>default (side-effect free)
+bash install.sh --default             # install the default-on set, no prompts
+bash install.sh --all                 # install every component, no prompts
+bash install.sh --select move_hotkey  # install exactly these component ids
+bash install.sh --help                # full usage
+```
+
+| Component id    | Hotkey                                   | Default        |
+| --------------- | ---------------------------------------- | -------------- |
+| `move_hotkey`   | Move active window with pointer          | `alt+super+w`  |
+| `resize_hotkey` | Resize active window from center         | `alt+super+e`  |
+
 ## Configuration
 
-The two keybindings live in the extension schema defaults
-(`schemas/org.gnome.shell.extensions.window-move-resize.gschema.xml`):
+### Choosing your own hotkeys
 
-- `drag-active-window-with-pointer` → `['<Alt><Super>W']`
-- `scale-active-window-from-center` → `['<Alt><Super>E']`
+Each hotkey is fully customizable. Describe a chord with the friendly
+`modifier+key` syntax — join the parts with `+`, for example `control+t`,
+`super+u`, or `alt+super+w`. Accepted modifiers are `control`/`ctrl`, `alt`,
+`super`/`win`, and `shift`.
 
-Override them per user with `gsettings`:
+- **Non-interactively** (and for the clean-install chain), set the per-hotkey
+  environment variable:
+
+  ```bash
+  MOVE_HOTKEY=control+t RESIZE_HOTKEY=alt+shift+r bash install.sh --default
+  ```
+
+- **On a terminal**, the installer prompts for each selected hotkey and shows the
+  default; press Enter to keep it.
+
+The installer converts your spec to the GTK accelerator form and writes it to the
+extension schema, then frees only the GNOME default bindings that collide with
+the chord you chose.
+
+### Adjusting a binding later
+
+The two keybindings live in the extension schema
+(`schemas/org.gnome.shell.extensions.window-move-resize.gschema.xml`). Override
+them per user with `gsettings` at any time:
 
 ```bash
 gsettings set org.gnome.shell.extensions.window-move-resize \
@@ -69,7 +113,17 @@ gsettings set org.gnome.shell.extensions.window-move-resize \
 
 ## Project Structure
 
-- `install.sh` — standalone installer (root-optional).
+- `install.sh` — standalone, component-based installer (root-optional); installs
+  the extension core, clears component-owned bindings, then routes selected
+  hotkeys through the shared framework.
+- `installer/components.sh` — component manifest mapping each hotkey id to its
+  configure function.
+- `lib/hotkey_tools.sh` — install library: extension-core install plus the
+  per-hotkey configure functions and conflict release.
+- `lib/accelerator.py` — converts friendly `modifier+key` specs to GTK
+  accelerators and normalizes them for comparison.
+- `lib/conflict_finder.py` — detects GNOME default bindings that shadow a chosen
+  accelerator (order- and case-insensitive).
 - `lib/bash_logging.sh` — centralized best-effort file logger for the Bash
   installer (writes to `.log/install.log`).
 - `lib/gsettings_strv.py` — tested string-array helper used by the installer.

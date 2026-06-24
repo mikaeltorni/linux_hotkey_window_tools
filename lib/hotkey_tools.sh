@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+# hotkey_tools.sh - install library for the window move/resize extension.
+#
+# Sourced by install.sh after the shared component framework + install helpers
+# are loaded (it relies on run_as_target/msg from installer_helpers.sh and the
+# install_log_* helpers from lib/bash_logging.sh). Defines the always-installed
+# extension core plus one configure_* function per selectable hotkey component.
+#
+# The extension itself is the core: it installs and is enabled no matter which
+# hotkeys the user selects, so the program works on its own. Each hotkey is an
+# optional, fully customizable module — the user picks the accelerator (friendly
+# "control+t" / "alt+super+w" syntax) and only the GNOME defaults that collide
+# with the chosen accelerator are released.
+#
+# Functions:
+#   hotkey_tools_set_strv_value    - set an extension schema key to one accelerator.
+#   remove_strv_value              - drop a value from a gsettings string-array key.
+#   install_extension_core         - copy/compile/enable the extension (always).
+#   resolve_hotkey_spec            - choose a friendly hotkey spec (env/prompt/default).
+#   release_conflicting_bindings   - free GNOME defaults that shadow an accelerator.
+#   apply_hotkey                   - resolve, convert, set, and de-conflict one hotkey.
+#   configure_move_hotkey          - install the pointer move hotkey component.
+#   configure_resize_hotkey        - install the pointer resize hotkey component.
+
+EXTENSION_ID="window-move-resize@local"
+SCHEMA_ID="org.gnome.shell.extensions.window-move-resize"
+GSCHEMA_FILE="org.gnome.shell.extensions.window-move-resize.gschema.xml"
+
+# Directory holding this library and the Python helpers it shells out to.
+HOTKEY_TOOLS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Populated by install_extension_core: the installed extension directory and the
+# compiled schema directory the configure_* functions point gsettings at.
+EXTENSION_TARGET_DIR=""
+EXTENSION_SCHEMA_DIR=""
+
+# GNOME schemas scanned for accelerators that would shadow a user-selected
+# hotkey. The extension's own schema is intentionally excluded so we never strip
+# the binding we are setting.
+GNOME_KEYBINDING_SCHEMAS=(
+  "org.gnome.desktop.wm.keybindings"
+  "org.gnome.shell.keybindings"
+  "org.gnome.mutter.keybindings"
+  "org.gnome.mutter.wayland.keybindings"
+  "org.gnome.settings-daemon.plugins.media-keys"
+)
+
+# Extension keys owned by selectable hotkey components. Core installation clears
+# these before selected components set their requested accelerators, so
+# deselected components leave no stale binding behind.
+EXTENSION_HOTKEY_KEYS=(
+  "drag-active-window-with-pointer"
+  "scale-active-window-from-center"
+)
+
+# Set one extension schema key to a single-element accelerator array, using the
+# freshly compiled schema directory so the key resolves before GNOME reloads.
+# Arguments: $1 - key name; $2 - GTK accelerator (e.g. "<Alt><Super>w").
+# Returns: 0.
+hotkey_tools_set_strv_value() {
+  local key="$1" accel="$2"
+  install_log_info "setting $SCHEMA_ID $key to '$accel'"
+  run_as_target gsettings --schemadir "$EXTENSION_SCHEMA_DIR" \
+    set "$SCHEMA_ID" "$key" "['${accel//\'/\\\'}']"
+}
+
+# Clear one extension schema key to an empty accelerator array.
+# Arguments: $1 - key name. Returns: 0.
+hotkey_tools_clear_strv_value() {
+  local key="$1"
+  install_log_info "clearing $SCHEMA_ID $key before component selection"
+  run_as_target gsettings --schemadir "$EXTENSION_SCHEMA_DIR" \
+    set "$SCHEMA_ID" "$key" "[]"
+}
+
+# Drop a value from a gsettings string-array key, keeping re-runs idempotent.
+# Arguments: $1 - schema; $2 - key; $3 - value to remove.
+# Returns: 0.
+remove_strv_value() {
+  local schema="$1" key="$2" value="$3" current new_value
+  install_log_info "ensuring gsettings value '$value' is absent at $schema $key"
+  current="$(run_as_target gsettings get "$schema" "$key" 2>/dev/null || printf '[]')"
+  new_value="$(CURRENT="$current" python3 "$HOTKEY_TOOLS_LIB_DIR/gsettings_strv.py" remove "$value")"
+  run_as_target gsettings set "$schema" "$key" "$new_value"
+}
+
+# Add a value to a gsettings string-array key, de-duplicating existing entries.
+# Arguments: $1 - schema; $2 - key; $3 - value to ensure present.
+# Returns: 0.
+append_strv_value() {
+  local schema="$1" key="$2" value="$3" current new_value
+  install_log_info "ensuring gsettings value '$value' is present at $schema $key"
+  current="$(run_as_target gsettings get "$schema" "$key" 2>/dev/null || printf '[]')"
+  new_value="$(CURRENT="$current" python3 "$HOTKEY_TOOLS_LIB_DIR/gsettings_strv.py" append "$value")"
+  run_as_target gsettings set "$schema" "$key" "$new_value"
+}
+
+# Install the extension files, compile its schema, and enable it. This is the
+# always-run core: it does not depend on any selected hotkey component, so the
+# extension is present and active even when the user deselects every hotkey.
+# Arguments: none. Returns: 0 on success; 1 when glib-compile-schemas is absent.
+install_extension_core() {
+  local source_dir
+  source_dir="$(cd "$HOTKEY_TOOLS_LIB_DIR/.." && pwd)"
+  EXTENSION_TARGET_DIR="$TARGET_HOME/.local/share/gnome-shell/extensions/$EXTENSION_ID"
+  EXTENSION_SCHEMA_DIR="$EXTENSION_TARGET_DIR/schemas"
+
+  if ! need_cmd glib-compile-schemas; then
+    install_log_error "glib-compile-schemas command is missing"
+    msg "glib-compile-schemas is required (package: libglib2.0-bin)."
+    return 1
+  fi
+
+  install_log_info "installing extension files to $EXTENSION_TARGET_DIR"
+  msg "Installing $EXTENSION_ID extension core"
+  install -d "$EXTENSION_SCHEMA_DIR"
+  install -m 0644 \
+    "$source_dir/extension.js" \
+    "$source_dir/windowUtils.js" \
+    "$source_dir/logger.js" \
+    "$source_dir/metadata.json" \
+    "$EXTENSION_TARGET_DIR/"
+  install -m 0644 "$source_dir/schemas/$GSCHEMA_FILE" "$EXTENSION_SCHEMA_DIR/"
+  glib-compile-schemas --strict "$EXTENSION_SCHEMA_DIR"
+  if is_root; then
+    install_log_info "fixing ownership of $EXTENSION_TARGET_DIR for $TARGET_USER"
+    chown -R "$TARGET_USER:$TARGET_USER" "$EXTENSION_TARGET_DIR"
+  fi
+
+  install_log_info "enabling extension $EXTENSION_ID"
+  run_as_target gsettings set org.gnome.shell disable-user-extensions false
+  append_strv_value org.gnome.shell enabled-extensions "$EXTENSION_ID"
+  if ! run_as_target gnome-extensions enable "$EXTENSION_ID" 2>/dev/null; then
+    install_log_warn "gnome-extensions enable deferred for $EXTENSION_ID (not visible until reload)"
+  fi
+  install_log_info "extension core installed"
+}
+
+# Clear every hotkey controlled by selectable components. This runs after the
+# core schema is installed and before component_main applies the chosen modules,
+# so a narrower rerun disables stale bindings from previously selected hotkeys.
+# Arguments: none. Returns: 0.
+clear_component_hotkeys() {
+  local key
+  for key in "${EXTENSION_HOTKEY_KEYS[@]}"; do
+    hotkey_tools_clear_strv_value "$key"
+  done
+}
+
+# Choose the friendly hotkey spec for a component. An explicit environment
+# variable wins (used by the master installer / automated runs); otherwise an
+# interactive terminal is prompted, with the documented "control+t" syntax;
+# otherwise the built-in default is used so piped/non-interactive runs never
+# block. Prints the chosen friendly spec to stdout.
+# Arguments: $1 - env var name; $2 - default friendly spec; $3 - human label.
+# Returns: 0.
+resolve_hotkey_spec() {
+  local env_var="$1" default_spec="$2" label="$3" chosen=""
+
+  if [[ -n "${!env_var:-}" ]]; then
+    chosen="${!env_var}"
+    install_log_info "using $env_var='$chosen' for $label"
+  elif [[ -t 0 && -t 1 ]]; then
+    printf 'Hotkey for %s.\n' "$label" >&2
+    printf '  Syntax: modifier+key joined with "+", e.g. control+t, super+u, alt+super+w.\n' >&2
+    printf '  Press Enter to keep the default [%s]: ' "$default_spec" >&2
+    IFS= read -r chosen || chosen=""
+    chosen="${chosen## }"
+    chosen="${chosen%% }"
+    [[ -z "$chosen" ]] && chosen="$default_spec"
+    install_log_info "interactive hotkey for $label: '$chosen'"
+  else
+    chosen="$default_spec"
+    install_log_info "defaulting $label hotkey to '$chosen' (non-interactive)"
+  fi
+
+  printf '%s' "$chosen"
+}
+
+# Remove an accelerator from every GNOME default keybinding key that currently
+# holds it, so a user-selected hotkey is never shadowed by a stock binding. Only
+# the schemas in GNOME_KEYBINDING_SCHEMAS are touched; the extension's own
+# schema is never scanned. Conflicts are released solely for accelerators the
+# user actually assigns.
+# Arguments: $1 - GTK accelerator (e.g. "<Alt><Super>e"). Returns: 0.
+release_conflicting_bindings() {
+  local accel="$1" schema key stored escaped
+  for schema in "${GNOME_KEYBINDING_SCHEMAS[@]}"; do
+    # list-recursively rows are "<schema> <key> <value>"; strip the leading
+    # "<schema> " so the normalizing conflict finder sees "<key> <value>". It
+    # prints "key<TAB>stored" for each genuine collision (order/case aware).
+    escaped="${schema//./\\.}"
+    while IFS=$'\t' read -r key stored; do
+      [[ -z "$key" ]] && continue
+      install_log_info "releasing GNOME default $schema $key='$stored' (collides with '$accel')"
+      msg "Freeing GNOME default $schema/$key which collides with $accel"
+      remove_strv_value "$schema" "$key" "$stored"
+    done < <(run_as_target gsettings list-recursively "$schema" 2>/dev/null \
+              | sed -E "s/^${escaped} //" \
+              | python3 "$HOTKEY_TOOLS_LIB_DIR/conflict_finder.py" "$accel" 2>/dev/null)
+  done
+}
+
+# Resolve, convert, set, and de-conflict a single hotkey component.
+# Arguments: $1 - schema key; $2 - env var; $3 - default friendly spec;
+#            $4 - human label. Returns: 0 on success; 1 on an invalid spec.
+apply_hotkey() {
+  local key="$1" env_var="$2" default_spec="$3" label="$4" spec accel
+  spec="$(resolve_hotkey_spec "$env_var" "$default_spec" "$label")"
+
+  if ! accel="$(python3 "$HOTKEY_TOOLS_LIB_DIR/accelerator.py" "$spec" 2>/dev/null)"; then
+    install_log_error "invalid hotkey spec '$spec' for $label"
+    msg "Invalid hotkey '$spec' for $label; not binding this component."
+    return 1
+  fi
+
+  msg "Binding $label to $accel (from '$spec')"
+  hotkey_tools_set_strv_value "$key" "$accel"
+  release_conflicting_bindings "$accel"
+}
+
+# configure_move_hotkey - install the pointer-driven window move hotkey.
+# Customizable via MOVE_HOTKEY (friendly syntax); defaults to alt+super+w.
+# Returns: the apply_hotkey status.
+configure_move_hotkey() {
+  apply_hotkey "drag-active-window-with-pointer" "MOVE_HOTKEY" \
+    "${MOVE_HOTKEY:-alt+super+w}" "move active window with pointer"
+}
+
+# configure_resize_hotkey - install the pointer-driven window resize hotkey.
+# Customizable via RESIZE_HOTKEY (friendly syntax); defaults to alt+super+e.
+# Returns: the apply_hotkey status.
+configure_resize_hotkey() {
+  apply_hotkey "scale-active-window-from-center" "RESIZE_HOTKEY" \
+    "${RESIZE_HOTKEY:-alt+super+e}" "resize active window from center"
+}

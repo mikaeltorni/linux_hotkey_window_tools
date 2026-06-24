@@ -14,6 +14,36 @@ extension. Keep them standalone: this repo must install on its own with
 `bash install.sh`, and `linux_hotkey_setup` delegates to this installer by
 default.
 
+## Installer architecture (core + selectable hotkeys)
+
+The installer is component-based, built on the shared component framework
+(`linux_installation_scripts_functions`, resolved from a sibling checkout or
+downloaded on demand — never vendored, never a hard requirement):
+
+- **Core (always installed):** `install_extension_core` in `lib/hotkey_tools.sh`
+  copies the extension, compiles the schema, and enables the extension.
+  `clear_component_hotkeys` then clears the component-owned schema keys before
+  component routing, so the extension is present no matter which hotkeys the
+  user selects (including none) and deselected hotkeys do not keep stale
+  bindings.
+- **Hotkeys (optional, default-on, customizable):** each hotkey is a component in
+  `installer/components.sh` mapped to a `configure_*` function. Honor the shared
+  framework subcommands (`--list-components`, `--select`, `--default`, `--all`,
+  interactive menu); keep listing/help side-effect free (handled before the core
+  install).
+- **Customization:** accelerators come from the friendly `modifier+key` syntax
+  via `lib/accelerator.py`. Resolution order is per-hotkey env var
+  (`MOVE_HOTKEY` / `RESIZE_HOTKEY`) → interactive prompt on a TTY → built-in
+  default, so automated/clean-install runs never block.
+- **Conflict release:** `lib/conflict_finder.py` normalizes accelerators
+  (order- and case-insensitive) so only the GNOME defaults that genuinely
+  collide with a *chosen* accelerator are freed. Do not hardcode a fixed
+  unbinding list.
+
+New user-visible features must be added as components here (default-on unless a
+requirement makes them optional) so the owning `install.sh` reproduces them on a
+clean machine.
+
 ## GNOME Shell reload requirements
 
 Editing `extension.js`, `metadata.json`, or anything under `schemas/` requires

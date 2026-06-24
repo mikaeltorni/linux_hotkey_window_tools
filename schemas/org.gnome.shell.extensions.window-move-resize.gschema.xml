@@ -2,11 +2,11 @@
 <schemalist>
   <schema id="org.gnome.shell.extensions.window-move-resize" path="/org/gnome/shell/extensions/window-move-resize/">
     <key name="drag-active-window-with-pointer" type="as">
-      <default>['&lt;Alt&gt;&lt;Super&gt;W']</default>
+      <default>[]</default>
       <summary>Move the focused window by pointer movement while held</summary>
     </key>
     <key name="scale-active-window-from-center" type="as">
-      <default>['&lt;Alt&gt;&lt;Super&gt;E']</default>
+      <default>[]</default>
       <summary>Scale the focused window about its center by moving the pointer</summary>
     </key>
   </schema>

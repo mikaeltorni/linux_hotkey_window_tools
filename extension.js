@@ -417,7 +417,7 @@ export default class WindowMoveResizeExtension extends Extension {
     );
     this._keybindings.push(CENTER_SCALE_KEY);
 
-    logger.info('extension enabled (Alt+Super+W move, Alt+Super+E resize)');
+    logger.info('extension enabled (pointer move/center resize keybindings registered)');
   }
 
   /**
