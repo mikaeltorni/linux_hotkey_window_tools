@@ -130,9 +130,15 @@ install_extension_core() {
   install_log_info "enabling extension $EXTENSION_ID"
   run_as_target gsettings set org.gnome.shell disable-user-extensions false
   append_strv_value org.gnome.shell enabled-extensions "$EXTENSION_ID"
-  if ! run_as_target gnome-extensions enable "$EXTENSION_ID" 2>/dev/null; then
-    install_log_warn "gnome-extensions enable deferred for $EXTENSION_ID (not visible until reload)"
-  fi
+  # Best-effort in-place enable, dispatched in the BACKGROUND so it can never
+  # block the installer. `gnome-extensions enable` is a synchronous D-Bus call
+  # into GNOME Shell that can hang for minutes on a fresh install or an
+  # unresponsive session. The extension is already persisted in
+  # enabled-extensions above (a live Shell auto-loads it; otherwise it activates
+  # on next login), so fire the live enable detached and time-boxed, with stdio
+  # redirected so it never holds the installer's pipe open.
+  install_log_info "dispatching background in-place enable for $EXTENSION_ID (applies live if the Shell is responsive, otherwise on next login)"
+  run_as_target sh -c 'timeout 5 gnome-extensions enable "$1" >/dev/null 2>&1 </dev/null &' _ "$EXTENSION_ID" || true
   install_log_info "extension core installed"
 }
 
