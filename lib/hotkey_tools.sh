@@ -240,3 +240,38 @@ configure_resize_hotkey() {
   apply_hotkey "scale-active-window-from-center" "RESIZE_HOTKEY" \
     "${RESIZE_HOTKEY:-alt+super+e}" "resize active window from center"
 }
+
+###############################################################################
+# Detection and uninstall (component lifecycle)
+###############################################################################
+# Each hotkey writes one accelerator key on the bundled extension's GSettings
+# schema. A hotkey is "installed" when that schema is present (so the binding
+# applies); uninstalling clears the accelerator (empty list) so the pointer
+# action no longer has a shortcut. The mandatory extension deploy is core and is
+# never removed by a component uninstall.
+
+# hwt_schema_dir: resolve the deployed extension schema dir without relying on
+# globals that are only set during the core install pass.
+hwt_schema_dir() {
+  printf '%s\n' "${TARGET_HOME:-$HOME}/.local/share/gnome-shell/extensions/$EXTENSION_ID/schemas"
+}
+
+# hwt_key_set: true when the extension schema key holds a non-empty accelerator.
+hwt_key_set() {
+  local key="$1" val
+  val="$(run_as_target gsettings --schemadir "$(hwt_schema_dir)" \
+    get "$SCHEMA_ID" "$key" 2>/dev/null || printf '[]')"
+  [[ -n "$val" && "$val" != "[]" && "$val" != "@as []" ]]
+}
+
+# hwt_clear_key: clear an extension accelerator key (set to empty list).
+hwt_clear_key() {
+  run_as_target gsettings --schemadir "$(hwt_schema_dir)" \
+    set "$SCHEMA_ID" "$1" "[]" 2>/dev/null || true
+}
+
+detect_move_hotkey()   { hwt_key_set "drag-active-window-with-pointer"; }
+detect_resize_hotkey() { hwt_key_set "scale-active-window-from-center"; }
+
+uninstall_move_hotkey()   { msg "Clearing move-window hotkey";   hwt_clear_key "drag-active-window-with-pointer"; }
+uninstall_resize_hotkey() { msg "Clearing resize-window hotkey"; hwt_clear_key "scale-active-window-from-center"; }

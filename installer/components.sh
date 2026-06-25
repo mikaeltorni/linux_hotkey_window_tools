@@ -17,6 +17,6 @@ ISC_REPO_NAME="linux_hotkey_window_tools"
 ISC_REPO_LABEL="Pointer-driven window move/resize hotkeys"
 
 ISC_COMPONENTS=(
-  "move_hotkey|Move active window with pointer (default alt+super+w)|on|configure_move_hotkey"
-  "resize_hotkey|Resize active window from center (default alt+super+e)|on|configure_resize_hotkey"
+  "move_hotkey|Move active window with pointer (default alt+super+w)|on|configure_move_hotkey|detect_move_hotkey|uninstall_move_hotkey"
+  "resize_hotkey|Resize active window from center (default alt+super+e)|on|configure_resize_hotkey|detect_resize_hotkey|uninstall_resize_hotkey"
 )
