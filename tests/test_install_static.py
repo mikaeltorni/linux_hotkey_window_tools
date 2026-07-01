@@ -36,7 +36,7 @@ def test_listing_is_handled_before_core_install():
     # --list-components / --help must exit before main() installs the extension,
     # keeping listing side-effect free for the master installer.
     source = INSTALL.read_text(encoding="utf-8")
-    list_idx = source.index("--list-components|--help|-h) component_main")
+    list_idx = re.search(r"--list-components\|[^)]*\) component_main", source).start()
     main_call = re.search(r"^main \"\$@\"", source, re.MULTILINE)
     assert main_call is not None
     assert list_idx < main_call.start()
@@ -46,7 +46,7 @@ def test_listing_is_handled_before_target_user_initialization():
     # Component discovery is consumed by the master installer and must not
     # depend on SUDO_USER, a live desktop session, or gsettings availability.
     source = INSTALL.read_text(encoding="utf-8")
-    list_idx = source.index("--list-components|--help|-h) component_main")
+    list_idx = re.search(r"--list-components\|[^)]*\) component_main", source).start()
     main_call = re.search(r"^main \"\$@\"", source, re.MULTILINE)
     assert main_call is not None
     main_body = source[source.index("main() {"):main_call.start()]
@@ -76,8 +76,8 @@ def test_schema_defaults_do_not_bind_optional_components():
 def test_components_manifest_declares_both_hotkeys_default_on():
     source = COMPONENTS.read_text(encoding="utf-8")
     assert 'ISC_REPO_NAME="linux_hotkey_window_tools"' in source
-    assert re.search(r"^\s*\"move_hotkey\|[^|]+\|on\|configure_move_hotkey\"", source, re.MULTILINE)
-    assert re.search(r"^\s*\"resize_hotkey\|[^|]+\|on\|configure_resize_hotkey\"", source, re.MULTILINE)
+    assert re.search(r"^\s*\"move_hotkey\|[^|]+\|on\|configure_move_hotkey(\||\")", source, re.MULTILINE)
+    assert re.search(r"^\s*\"resize_hotkey\|[^|]+\|on\|configure_resize_hotkey(\||\")", source, re.MULTILINE)
 
 
 def test_hotkey_library_defines_core_and_component_functions():
