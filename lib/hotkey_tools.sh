@@ -210,17 +210,55 @@ release_conflicting_bindings() {
 # Resolve, convert, set, and de-conflict a single hotkey component.
 # Arguments: $1 - schema key; $2 - env var; $3 - default friendly spec;
 #            $4 - human label. Returns: 0 on success; 1 on an invalid spec.
+# hwt_conflict_candidates — print "schema key<TAB>accelerator" candidate lines
+# for the shared capture UI's real-time conflict warnings, covering the GNOME
+# default keybinding schemas this component de-conflicts against.
+hwt_conflict_candidates() {
+  local schema
+  for schema in "${GNOME_KEYBINDING_SCHEMAS[@]}"; do
+    run_as_target gsettings list-recursively "$schema" 2>/dev/null
+  done | python3 - <<'PY' 2>/dev/null || true
+import ast, sys
+for line in sys.stdin:
+    line = line.rstrip("\n")
+    if not line.strip():
+        continue
+    try:
+        schema, key, raw = line.split(" ", 2)
+        values = ast.literal_eval(raw)
+    except Exception:
+        continue
+    if isinstance(values, list):
+        for accel in values:
+            if accel:
+                print(f"{schema} {key}\t{accel}")
+PY
+}
+
 apply_hotkey() {
   local key="$1" env_var="$2" default_spec="$3" label="$4" spec accel
-  spec="$(resolve_hotkey_spec "$env_var" "$default_spec" "$label")"
 
-  if ! accel="$(python3 "$HOTKEY_TOOLS_LIB_DIR/accelerator.py" "$spec" 2>/dev/null)"; then
-    install_log_error "invalid hotkey spec '$spec' for $label"
-    msg "Invalid hotkey '$spec' for $label; not binding this component."
-    return 1
+  # Prefer the shared interactive press-to-capture engine (returns a GTK
+  # accelerator directly, converting friendly env/default specs). Fall back to
+  # the friendly text prompt + accelerator.py when the shared helper is absent.
+  if declare -F isc_capture_hotkey >/dev/null 2>&1; then
+    accel="$(ISC_HOTKEY_CONFLICTS_FN=hwt_conflict_candidates \
+      isc_capture_hotkey "$env_var" "$default_spec" "$label")"
+    if [[ -z "$accel" ]]; then
+      install_log_error "empty hotkey for $label"
+      msg "No hotkey captured for $label; not binding this component."
+      return 1
+    fi
+  else
+    spec="$(resolve_hotkey_spec "$env_var" "$default_spec" "$label")"
+    if ! accel="$(python3 "$HOTKEY_TOOLS_LIB_DIR/accelerator.py" "$spec" 2>/dev/null)"; then
+      install_log_error "invalid hotkey spec '$spec' for $label"
+      msg "Invalid hotkey '$spec' for $label; not binding this component."
+      return 1
+    fi
   fi
 
-  msg "Binding $label to $accel (from '$spec')"
+  msg "Binding $label to $accel"
   hotkey_tools_set_strv_value "$key" "$accel"
   release_conflicting_bindings "$accel"
 }
