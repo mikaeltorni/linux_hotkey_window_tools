@@ -95,7 +95,7 @@ main() {
 # --list-components) and stay side-effect free: handle them before the core
 # install runs.
 case "${1:-}" in
-  --list-components|--detect|--help|-h|--uninstall|--uninstall=*) component_main "$@"; exit $? ;;
+  --list-components|--export-selection|--detect|--help|-h|--uninstall|--uninstall=*) component_main "$@"; exit $? ;;
 esac
 
 main "$@"
