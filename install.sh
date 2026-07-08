@@ -4,11 +4,14 @@
 # The extension is the always-installed core: its files and compiled gsettings
 # schema are copied into the target user's local GNOME Shell extensions
 # directory and the extension is enabled, so the program works no matter which
-# hotkeys the user picks. Each hotkey (move, resize) is an optional, default-on,
-# fully customizable component routed through the shared component framework. A
-# selected hotkey's accelerator is taken from its environment variable
-# (MOVE_HOTKEY / RESIZE_HOTKEY), or prompted on a terminal, or defaulted; only
-# the GNOME default bindings that collide with a chosen accelerator are freed.
+# hotkeys the user picks. Each hotkey is an optional, default-on, fully
+# customizable component routed through the shared component framework. The
+# pointer move/resize hotkeys are keys on the extension's schema; the
+# open-kitty-and-sort hotkey is a GNOME custom keybinding that runs a helper
+# script (no Shell reload needed). A selected hotkey's accelerator is taken from
+# its environment variable (MOVE_HOTKEY / RESIZE_HOTKEY / OPEN_KITTY_SORT_HOTKEY),
+# or prompted on a terminal, or defaulted; only the GNOME default bindings that
+# collide with a chosen accelerator are freed.
 #
 # Runs sudo-free as the desktop user, and also through sudo (deriving the target
 # from SUDO_USER) for the clean-install chain.
@@ -90,6 +93,21 @@ main() {
   install_log_info "installed $EXTENSION_ID successfully"
   msg "Installed $EXTENSION_ID. Log out and back in if GNOME Shell has not loaded the extension."
 }
+
+# Best-effort target-user context for the --detect / --uninstall routing below,
+# which bypasses main() (and therefore initialize_target_user()). Without this,
+# the detect_*/uninstall_* helpers' run_as_target calls run with an empty
+# TARGET_USER and silently report every component as absent (or no-op). This
+# never fails and emits no stdout, so --list-components / --help stay
+# side-effect free; main() re-derives and validates the same values
+# authoritatively inside initialize_target_user().
+: "${TARGET_USER:=${SUDO_USER:-$USER}}"
+: "${TARGET_HOME:=$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6)}"
+if [[ -z "${TARGET_HOME:-}" ]]; then TARGET_HOME="$HOME"; fi
+: "${TARGET_UID:=$(id -u "$TARGET_USER" 2>/dev/null || id -u)}"
+: "${RUNTIME_DIR:=/run/user/$TARGET_UID}"
+: "${USER_BUS:=unix:path=$RUNTIME_DIR/bus}"
+: "${DISPLAY_VAL:=${DISPLAY:-:0}}"
 
 # Listing/help must print only their own output (the master installer parses
 # --list-components) and stay side-effect free: handle them before the core

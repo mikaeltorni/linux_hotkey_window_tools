@@ -3,11 +3,19 @@
 ## What this repository owns
 
 A single GNOME Shell extension (`window-move-resize@local`) providing two
-pointer-driven, hold-to-act window hotkeys:
+pointer-driven, hold-to-act window hotkeys, plus a one-shot launcher hotkey:
 
 - `drag-active-window-with-pointer` (`<Alt><Super>W`) — move the focused window.
 - `scale-active-window-from-center` (`<Alt><Super>E`) — resize the focused
   window about its pinned center.
+- `open-kitty-sort` (`<Super>less`, the `<` key left of Z on Nordic layouts) —
+  a GNOME custom keybinding (not an extension schema key) that runs
+  `scripts/open-kitty-and-sort.sh`: opens `kitty`, pins the new window to the
+  workspace that was active when the hotkey fired (so it never lands on a
+  different workspace), waits up to ~2s for the new window to map (polling with
+  xdotool so the sort fires the instant it appears), then triggers the
+  window-sort (automatic-window-tiling) hotkey so the new terminal is tiled with
+  the other kitty windows. No GNOME Shell reload needed.
 
 These were extracted from `linux_hotkey_setup`'s `monitor-window-hotkeys@local`
 extension. Keep them standalone: this repo must install on its own with
@@ -22,10 +30,10 @@ downloaded on demand — never vendored, never a hard requirement):
 
 - **Core (always installed):** `install_extension_core` in `lib/hotkey_tools.sh`
   copies the extension, compiles the schema, and enables the extension.
-  `clear_component_hotkeys` then clears the component-owned schema keys before
-  component routing, so the extension is present no matter which hotkeys the
-  user selects (including none) and deselected hotkeys do not keep stale
-  bindings.
+  `clear_component_hotkeys` then clears the component-owned schema keys and the
+  open-kitty-sort GNOME custom keybinding before component routing, so the
+  extension is present no matter which hotkeys the user selects (including none)
+  and deselected hotkeys do not keep stale bindings.
 - **Hotkeys (optional, default-on, customizable):** each hotkey is a component in
   `installer/components.sh` mapped to a `configure_*` function. Honor the shared
   framework subcommands (`--list-components`, `--select`, `--default`, `--all`,
@@ -33,8 +41,9 @@ downloaded on demand — never vendored, never a hard requirement):
   install).
 - **Customization:** accelerators come from the friendly `modifier+key` syntax
   via `lib/accelerator.py`. Resolution order is per-hotkey env var
-  (`MOVE_HOTKEY` / `RESIZE_HOTKEY`) → interactive prompt on a TTY → built-in
-  default, so automated/clean-install runs never block.
+  (`MOVE_HOTKEY` / `RESIZE_HOTKEY` / `OPEN_KITTY_SORT_HOTKEY`) → interactive
+  prompt on a TTY → built-in default, so automated/clean-install runs never
+  block.
 - **Conflict release:** `lib/conflict_finder.py` normalizes accelerators
   (order- and case-insensitive) so only the GNOME defaults that genuinely
   collide with a *chosen* accelerator are freed. Do not hardcode a fixed

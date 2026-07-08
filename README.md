@@ -3,7 +3,8 @@
 > Part of [installation_scripts](https://github.com/mikaeltorni/installation_scripts) — the master installer that orchestrates a productivity-focused Ubuntu 24.04 desktop setup. Tested on Ubuntu 24.04.4 LTS.
 
 A standalone GNOME Shell extension that adds two pointer-driven, hold-to-act
-window hotkeys:
+window hotkeys, plus a one-shot launcher that opens a terminal and sorts it into
+place:
 
 - **Move (`<Alt><Super>W`)** — hold the chord and the focused window follows the
   pointer. The drag ends the moment you release Super (a left-button click also
@@ -13,6 +14,12 @@ window hotkeys:
   the center enlarges the window, and moving it back toward the center shrinks it,
   on both axes at once. Scaling ends when you release Super (a mouse click or
   Escape also ends it).
+- **Open kitty and sort (`<Super><`)** — press once to open a `kitty` terminal,
+  wait briefly for it to map, then trigger the window-sort (automatic tiling)
+  hotkey so the new terminal is tiled with the other kitty windows instead of
+  having to be focused from the taskbar. `<` is the `less` key — the key left of
+  `Z` on Nordic layouts. This is a GNOME custom keybinding that runs a helper
+  script (not a pointer gesture), so it needs no GNOME Shell reload.
 
 The extension itself is the **always-installed core**: it is installed and
 enabled no matter which hotkeys you select, with no implicit accelerator owned by
@@ -39,6 +46,8 @@ See the full cross-repository map in
 
 - A GNOME Shell extension (`extension.js`) implementing the two hold-to-act
   pointer gestures and their lifecycle.
+- A helper script (`scripts/open-kitty-and-sort.sh`) bound to a GNOME custom
+  keybinding that launches `kitty` and triggers the window-sort hotkey.
 - A Bash installer built on the shared component framework
   (`linux_installation_scripts_functions`), following the root-optional
   (sudo-free) installer pattern.
@@ -72,10 +81,11 @@ bash install.sh --select move_hotkey  # install exactly these component ids
 bash install.sh --help                # full usage
 ```
 
-| Component id    | Hotkey                                   | Default        |
-| --------------- | ---------------------------------------- | -------------- |
-| `move_hotkey`   | Move active window with pointer          | `alt+super+w`  |
-| `resize_hotkey` | Resize active window from center         | `alt+super+e`  |
+| Component id             | Hotkey                                     | Default          |
+| ------------------------ | ------------------------------------------ | ---------------- |
+| `move_hotkey`            | Move active window with pointer            | `alt+super+w`    |
+| `resize_hotkey`          | Resize active window from center           | `alt+super+e`    |
+| `open_kitty_sort_hotkey` | Open kitty terminal and auto-sort windows  | `super+less` (`<`) |
 
 ## Configuration
 
@@ -90,7 +100,8 @@ Each hotkey is fully customizable. Describe a chord with the friendly
   environment variable:
 
   ```bash
-  MOVE_HOTKEY=control+t RESIZE_HOTKEY=alt+shift+r bash install.sh --default
+  MOVE_HOTKEY=control+t RESIZE_HOTKEY=alt+shift+r \
+    OPEN_KITTY_SORT_HOTKEY=super+comma bash install.sh --default
   ```
 
 - **On a terminal**, the installer prompts for each selected hotkey and shows the
@@ -102,7 +113,7 @@ the chord you chose.
 
 ### Adjusting a binding later
 
-The two keybindings live in the extension schema
+The two pointer hotkeys live in the extension schema
 (`schemas/org.gnome.shell.extensions.window-move-resize.gschema.xml`). Override
 them per user with `gsettings` at any time:
 
@@ -110,6 +121,29 @@ them per user with `gsettings` at any time:
 gsettings set org.gnome.shell.extensions.window-move-resize \
   scale-active-window-from-center "['<Alt><Super>R']"
 ```
+
+The **open-kitty-and-sort** hotkey is a GNOME custom keybinding instead, so it is
+adjusted (and takes effect live, with no Shell reload) via the relocatable
+media-keys schema:
+
+```bash
+p=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/open-kitty-sort/
+gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$p \
+  binding "'<Super>less'"
+```
+
+The helper script it runs (`~/.local/bin/open-kitty-and-sort.sh`) opens `kitty`,
+pins the new window to the workspace that was active when the hotkey fired (so it
+never lands on a different workspace), waits up to `OPEN_KITTY_SORT_DELAY`
+seconds (default `2`) for the new window to map, then simulates the window-sort
+hotkey. With `xdotool` (X11) it polls for the new kitty window and fires the sort
+the instant it appears — the 2 s is only the upper bound, not a fixed delay. The
+sort accelerator is resolved from `OPEN_KITTY_SORT_HOTKEY`, else the
+`automatic-window-tiling@local` extension's configured binding, else `<Super>t`.
+Simulation uses `xdotool` when available (X11); without a key simulator the
+terminal still opens and the sort is skipped with a logged message (for example
+on a clean Wayland install — install `ydotool` with uinput access there to enable
+the auto-sort).
 
 ## Project Structure
 
@@ -129,6 +163,9 @@ gsettings set org.gnome.shell.extensions.window-move-resize \
 - `lib/gsettings_strv.py` — tested string-array helper used by the installer.
 - `lib/log_utils.py` — centralized Python file logger and call-tracing
   decorator for installer-side helpers (writes to `.log/`).
+- `scripts/open-kitty-and-sort.sh` — runtime helper bound to the
+  open-kitty-and-sort GNOME custom keybinding: opens `kitty`, waits briefly,
+  then triggers the window-sort (automatic tiling) hotkey.
 - `extension.js` — the GNOME Shell extension entry point and gesture state
   machines (move + resize).
 - `windowUtils.js` — reusable, version-spanning window/pointer helpers used by

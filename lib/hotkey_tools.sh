@@ -21,6 +21,10 @@
 #   apply_hotkey                   - resolve, convert, set, and de-conflict one hotkey.
 #   configure_move_hotkey          - install the pointer move hotkey component.
 #   configure_resize_hotkey        - install the pointer resize hotkey component.
+#   install_open_kitty_sort_script - deploy the open-kitty-and-sort helper script.
+#   configure_open_kitty_sort_hotkey - bind the launch-kitty-and-sort custom keybinding.
+#   detect_open_kitty_sort_hotkey  - report whether the custom keybinding is registered.
+#   uninstall_open_kitty_sort_hotkey - remove the custom keybinding and helper script.
 
 EXTENSION_ID="window-move-resize@local"
 SCHEMA_ID="org.gnome.shell.extensions.window-move-resize"
@@ -52,6 +56,27 @@ EXTENSION_HOTKEY_KEYS=(
   "drag-active-window-with-pointer"
   "scale-active-window-from-center"
 )
+
+# GNOME custom-keybinding owned by the open-kitty-and-sort component. Unlike the
+# hold-to-act pointer gestures above, this is a one-shot "launch kitty then sort"
+# command: it is bound as a stock GNOME custom keybinding (a relocatable
+# media-keys schema instance) that runs the helper script, NOT as a key on this
+# extension's schema. Core installation clears it (see hwt_clear_custom_keybinding)
+# so a deselected rerun leaves no stale launcher binding, then the component
+# re-registers it when selected.
+MEDIAKEYS_SCHEMA="org.gnome.settings-daemon.plugins.media-keys"
+MEDIAKEYS_CUSTOM_KEY="custom-keybindings"
+CUSTOM_KEYBINDING_REL_SCHEMA="org.gnome.settings-daemon.plugins.media-keys.custom-keybinding"
+OPEN_KITTY_SORT_CUSTOM_PATH="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/open-kitty-sort/"
+OPEN_KITTY_SORT_CUSTOM_NAME="Open kitty and sort windows"
+OPEN_KITTY_SORT_SCRIPT_NAME="open-kitty-and-sort.sh"
+# Runtime helper source (repo root /scripts); installed to ~/.local/bin/ by
+# install_open_kitty_sort_script. Resolved lazily so the path is correct whether
+# the library is sourced from a checkout or a copied tree.
+OPEN_KITTY_SORT_SCRIPT_SRC="$HOTKEY_TOOLS_LIB_DIR/../scripts/$OPEN_KITTY_SORT_SCRIPT_NAME"
+# Populated by install_open_kitty_sort_script: the deployed helper path the
+# custom keybinding's command points at.
+OPEN_KITTY_SORT_SCRIPT_TARGET=""
 
 # Set one extension schema key to a single-element accelerator array, using the
 # freshly compiled schema directory so the key resolves before GNOME reloads.
@@ -142,15 +167,32 @@ install_extension_core() {
   install_log_info "extension core installed"
 }
 
+# hwt_clear_custom_keybinding - remove a GNOME custom keybinding registration
+# so a deselected/rerun install never leaves a stale launcher binding. Drops the
+# path from the media-keys custom-keybindings list and resets the relocatable
+# name/command/binding keys. Best-effort: ignores failures when nothing is set.
+# Arguments: $1 - custom-keybinding settings path. Returns: 0.
+hwt_clear_custom_keybinding() {
+  local path="$1"
+  install_log_info "clearing custom keybinding at $path before component selection"
+  remove_strv_value "$MEDIAKEYS_SCHEMA" "$MEDIAKEYS_CUSTOM_KEY" "$path" 2>/dev/null || true
+  run_as_target gsettings reset "$CUSTOM_KEYBINDING_REL_SCHEMA:$path" name 2>/dev/null || true
+  run_as_target gsettings reset "$CUSTOM_KEYBINDING_REL_SCHEMA:$path" command 2>/dev/null || true
+  run_as_target gsettings reset "$CUSTOM_KEYBINDING_REL_SCHEMA:$path" binding 2>/dev/null || true
+}
+
 # Clear every hotkey controlled by selectable components. This runs after the
 # core schema is installed and before component_main applies the chosen modules,
 # so a narrower rerun disables stale bindings from previously selected hotkeys.
+# Covers both the extension-schema keybindings (pointer move/resize) and the
+# GNOME custom keybinding owned by the open-kitty-and-sort component.
 # Arguments: none. Returns: 0.
 clear_component_hotkeys() {
   local key
   for key in "${EXTENSION_HOTKEY_KEYS[@]}"; do
     hotkey_tools_clear_strv_value "$key"
   done
+  hwt_clear_custom_keybinding "$OPEN_KITTY_SORT_CUSTOM_PATH"
 }
 
 # Choose the friendly hotkey spec for a component. An explicit environment
@@ -313,3 +355,107 @@ detect_resize_hotkey() { hwt_key_set "scale-active-window-from-center"; }
 
 uninstall_move_hotkey()   { msg "Clearing move-window hotkey";   hwt_clear_key "drag-active-window-with-pointer"; }
 uninstall_resize_hotkey() { msg "Clearing resize-window hotkey"; hwt_clear_key "scale-active-window-from-center"; }
+
+###############################################################################
+# Open kitty and sort windows (GNOME custom keybinding component)
+###############################################################################
+# Unlike the pointer move/resize hotkeys, this is a one-shot command: it opens
+# kitty, waits briefly for the new window to map, then triggers the window-sort
+# (automatic-window-tiling) hotkey so the terminal is tiled with the other kitty
+# windows. It is bound as a stock GNOME custom keybinding that runs the helper
+# script scripts/open-kitty-and-sort.sh, NOT as a key on this extension's
+# schema, so it needs no GNOME Shell reload. The custom keybinding path is
+# cleared by clear_component_hotkeys before routing, then re-registered here when
+# the component is selected; detect/uninstall remove it on demand.
+
+# install_open_kitty_sort_script - copy the helper script to the target user's
+# ~/.local/bin so the custom keybinding's command can run it. Sets
+# OPEN_KITTY_SORT_SCRIPT_TARGET to the deployed path. Returns: 0 on success;
+# 1 when the source script is missing.
+install_open_kitty_sort_script() {
+  local target="$TARGET_HOME/.local/bin/$OPEN_KITTY_SORT_SCRIPT_NAME"
+  if [[ ! -f "$OPEN_KITTY_SORT_SCRIPT_SRC" ]]; then
+    install_log_error "open-kitty-and-sort source missing at $OPEN_KITTY_SORT_SCRIPT_SRC"
+    msg "open-kitty-and-sort helper source missing; skipping component."
+    return 1
+  fi
+  install_log_info "installing open-kitty-and-sort helper to $target"
+  msg "Installing open-kitty-and-sort helper script"
+  install -d "$(dirname "$target")"
+  if is_root; then
+    install -D -m 0755 -o "$TARGET_USER" -g "$TARGET_USER" "$OPEN_KITTY_SORT_SCRIPT_SRC" "$target"
+  else
+    install -D -m 0755 "$OPEN_KITTY_SORT_SCRIPT_SRC" "$target"
+  fi
+  OPEN_KITTY_SORT_SCRIPT_TARGET="$target"
+}
+
+# configure_open_kitty_sort_hotkey - install the helper script and bind the
+# launch-kitty-and-sort GNOME custom keybinding. The accelerator is resolved the
+# same way as the pointer hotkeys (shared capture engine or friendly prompt +
+# accelerator.py); default is super+less (the "<" key, left of Z on Nordic
+# layouts). Only GNOME defaults that collide with the chosen accelerator are
+# freed. Customizable via OPEN_KITTY_SORT_HOTKEY (friendly syntax).
+# Returns: 0 on success; 1 when the hotkey is empty/invalid or the script is
+# missing.
+configure_open_kitty_sort_hotkey() {
+  install_open_kitty_sort_script || return 1
+
+  local accel spec
+  # Prefer the shared interactive press-to-capture engine (returns a GTK
+  # accelerator directly, converting friendly env/default specs). Fall back to
+  # the friendly text prompt + accelerator.py when the shared helper is absent —
+  # the same resolution flow apply_hotkey uses for the pointer hotkeys.
+  if declare -F isc_capture_hotkey >/dev/null 2>&1; then
+    accel="$(ISC_HOTKEY_CONFLICTS_FN=hwt_conflict_candidates \
+      isc_capture_hotkey OPEN_KITTY_SORT_HOTKEY super+less "open kitty and sort windows")"
+    if [[ -z "$accel" ]]; then
+      install_log_error "empty hotkey for open kitty and sort windows"
+      msg "No hotkey captured for open kitty and sort windows; not binding this component."
+      return 1
+    fi
+  else
+    spec="$(resolve_hotkey_spec OPEN_KITTY_SORT_HOTKEY super+less "open kitty and sort windows")"
+    if ! accel="$(python3 "$HOTKEY_TOOLS_LIB_DIR/accelerator.py" "$spec" 2>/dev/null)"; then
+      install_log_error "invalid hotkey spec '$spec' for open kitty and sort windows"
+      msg "Invalid hotkey '$spec' for open kitty and sort windows; not binding this component."
+      return 1
+    fi
+  fi
+
+  msg "Binding open kitty and sort windows to $accel"
+  # Register the GNOME custom keybinding: list its path among the active
+  # custom-keybindings, then set the relocatable name/command/binding keys. The
+  # command points at the freshly installed helper script.
+  append_strv_value "$MEDIAKEYS_SCHEMA" "$MEDIAKEYS_CUSTOM_KEY" "$OPEN_KITTY_SORT_CUSTOM_PATH"
+  run_as_target gsettings set "$CUSTOM_KEYBINDING_REL_SCHEMA:$OPEN_KITTY_SORT_CUSTOM_PATH" \
+    name "'$OPEN_KITTY_SORT_CUSTOM_NAME'"
+  run_as_target gsettings set "$CUSTOM_KEYBINDING_REL_SCHEMA:$OPEN_KITTY_SORT_CUSTOM_PATH" \
+    command "'$OPEN_KITTY_SORT_SCRIPT_TARGET'"
+  run_as_target gsettings set "$CUSTOM_KEYBINDING_REL_SCHEMA:$OPEN_KITTY_SORT_CUSTOM_PATH" \
+    binding "'$accel'"
+  release_conflicting_bindings "$accel"
+
+  # Informational (non-fatal): the helper script simulates the sort hotkey via
+  # xdotool, which is not present on a clean install. Note it so the user knows
+  # the auto-sort needs a key simulator while kitty still opens regardless.
+  if ! need_cmd xdotool; then
+    msg "Note: xdotool not found; open-kitty-and-sort will open kitty but skip the auto-sort until a key simulator is available."
+  fi
+}
+
+# detect_open_kitty_sort_hotkey - true when the custom keybinding path is listed
+# among the active media-keys custom-keybindings.
+detect_open_kitty_sort_hotkey() {
+  local current
+  current="$(run_as_target gsettings get "$MEDIAKEYS_SCHEMA" "$MEDIAKEYS_CUSTOM_KEY" 2>/dev/null || printf '[]')"
+  printf '%s' "$current" | grep -Fq "$OPEN_KITTY_SORT_CUSTOM_PATH"
+}
+
+# uninstall_open_kitty_sort_hotkey - remove the custom keybinding registration
+# (path + relocatable keys) and delete the helper script (best-effort).
+uninstall_open_kitty_sort_hotkey() {
+  msg "Removing open-kitty-and-sort custom keybinding"
+  hwt_clear_custom_keybinding "$OPEN_KITTY_SORT_CUSTOM_PATH"
+  rm -f "$TARGET_HOME/.local/bin/$OPEN_KITTY_SORT_SCRIPT_NAME" 2>/dev/null || true
+}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +11,7 @@ INSTALL = ROOT / "install.sh"
 COMPONENTS = ROOT / "installer" / "components.sh"
 HOTKEY_TOOLS = ROOT / "lib" / "hotkey_tools.sh"
 SCHEMA = ROOT / "schemas" / "org.gnome.shell.extensions.window-move-resize.gschema.xml"
+OPEN_KITTY_SORT_SCRIPT = ROOT / "scripts" / "open-kitty-and-sort.sh"
 
 
 def test_installer_loads_shared_component_framework():
@@ -97,3 +99,74 @@ def test_hotkeys_are_customizable_via_environment():
     source = HOTKEY_TOOLS.read_text(encoding="utf-8")
     assert "MOVE_HOTKEY" in source
     assert "RESIZE_HOTKEY" in source
+
+
+def test_open_kitty_sort_component_is_declared_default_on():
+    source = COMPONENTS.read_text(encoding="utf-8")
+    assert re.search(
+        r'^\s*"open_kitty_sort_hotkey\|[^|]+\|on\|configure_open_kitty_sort_hotkey(\||")',
+        source,
+        re.MULTILINE,
+    )
+
+
+def test_hotkey_library_defines_open_kitty_sort_functions():
+    source = HOTKEY_TOOLS.read_text(encoding="utf-8")
+    for fn in (
+        "install_open_kitty_sort_script()",
+        "configure_open_kitty_sort_hotkey()",
+        "detect_open_kitty_sort_hotkey()",
+        "uninstall_open_kitty_sort_hotkey()",
+        "hwt_clear_custom_keybinding()",
+    ):
+        assert fn in source
+
+
+def test_open_kitty_sort_is_customizable_via_environment():
+    source = HOTKEY_TOOLS.read_text(encoding="utf-8")
+    assert "OPEN_KITTY_SORT_HOTKEY" in source
+
+
+def test_open_kitty_sort_script_is_valid_bash_and_present():
+    assert OPEN_KITTY_SORT_SCRIPT.is_file(), "open-kitty-and-sort.sh missing"
+    source = OPEN_KITTY_SORT_SCRIPT.read_text(encoding="utf-8")
+    assert "kitty" in source
+    assert "xdotool" in source
+    assert "OPEN_KITTY_SORT_DELAY" in source
+    result = subprocess.run(
+        ["bash", "-n", str(OPEN_KITTY_SORT_SCRIPT)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_open_kitty_sort_uses_custom_keybinding_not_schema():
+    # The launch-kitty-and-sort hotkey is a GNOME custom keybinding, not a key on
+    # this extension's schema, so it needs no GNOME Shell reload and the schema
+    # stays limited to the pointer move/resize keys.
+    schema = SCHEMA.read_text(encoding="utf-8")
+    assert "open-kitty-sort" not in schema
+    assert "open_kitty_sort" not in schema
+    source = HOTKEY_TOOLS.read_text(encoding="utf-8")
+    assert "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding" in source
+    assert "/custom-keybindings/open-kitty-sort/" in source
+
+
+def test_clear_component_hotkeys_clears_custom_keybinding():
+    source = HOTKEY_TOOLS.read_text(encoding="utf-8")
+    start = source.index("clear_component_hotkeys() {")
+    body = source[start : start + 400]
+    assert "hwt_clear_custom_keybinding" in body
+
+
+def test_detect_routing_has_target_user_context():
+    # --detect / --uninstall bypass main()/initialize_target_user(), so install.sh
+    # must derive a best-effort TARGET_USER before that routing, or detect would
+    # falsely report every component as absent.
+    source = INSTALL.read_text(encoding="utf-8")
+    ctx = re.search(r': "\$\{TARGET_USER:=', source)
+    assert ctx is not None, "target-user default missing before detect routing"
+    case = re.search(r"--list-components\|[^)]*\) component_main", source)
+    assert case is not None
+    assert ctx.start() < case.start()
