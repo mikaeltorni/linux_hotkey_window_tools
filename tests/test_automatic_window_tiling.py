@@ -12,32 +12,45 @@ def test_resolve_sort_accelerator_uses_env_override():
     assert awt.resolve_sort_accelerator(env={"OPEN_KITTY_SORT_HOTKEY": "<Super>w"}) == "<Super>w"
 
 
-def test_resolve_sort_accelerator_reads_gsettings_first_entry():
-    def gsettings_get(_command):
+def test_resolve_sort_accelerator_reads_gsettings_first_entry(tmp_path):
+    schema_dir = tmp_path / "schemas"
+    schema_dir.mkdir()
+    calls: list[list[str]] = []
+
+    def gsettings_get(command):
+        calls.append(list(command))
         return "['<Super>t']"
 
     assert (
         awt.resolve_sort_accelerator(
             env={},
             gsettings_get=gsettings_get,
-            schema_dir=Path("/tmp/schemas"),
+            schema_dir=schema_dir,
         )
         == "<Super>t"
     )
+    assert calls
+    assert str(schema_dir) in calls[0]
 
 
-def test_resolve_sort_accelerator_defaults_when_gsettings_empty():
-    def gsettings_get(_command):
+def test_resolve_sort_accelerator_defaults_when_gsettings_empty(tmp_path):
+    schema_dir = tmp_path / "schemas"
+    schema_dir.mkdir()
+    calls: list[list[str]] = []
+
+    def gsettings_get(command):
+        calls.append(list(command))
         return "@as []"
 
     assert (
         awt.resolve_sort_accelerator(
             env={},
             gsettings_get=gsettings_get,
-            schema_dir=Path("/tmp/schemas"),
+            schema_dir=schema_dir,
         )
         == "<Super>t"
     )
+    assert calls
 
 
 def test_gtk_to_xdotool_preserves_named_keys():
