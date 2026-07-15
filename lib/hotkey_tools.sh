@@ -374,6 +374,7 @@ uninstall_resize_hotkey() { msg "Clearing resize-window hotkey"; hwt_clear_key "
 # 1 when the source script is missing.
 install_open_kitty_sort_script() {
   local target="$TARGET_HOME/.local/bin/$OPEN_KITTY_SORT_SCRIPT_NAME"
+  local lib_target="$TARGET_HOME/.local/share/linux_hotkey_window_tools/lib"
   if [[ ! -f "$OPEN_KITTY_SORT_SCRIPT_SRC" ]]; then
     install_log_error "open-kitty-and-sort source missing at $OPEN_KITTY_SORT_SCRIPT_SRC"
     msg "open-kitty-and-sort helper source missing; skipping component."
@@ -387,6 +388,21 @@ install_open_kitty_sort_script() {
   else
     install -D -m 0755 "$OPEN_KITTY_SORT_SCRIPT_SRC" "$target"
   fi
+  install_log_info "installing automatic-window-tiling shared helpers to $lib_target"
+  install -d "$lib_target"
+  for helper in automatic_window_tiling.py automatic_window_tiling.sh log_utils.py; do
+    if [[ ! -f "$HOTKEY_TOOLS_LIB_DIR/$helper" ]]; then
+      install_log_error "shared helper missing at $HOTKEY_TOOLS_LIB_DIR/$helper"
+      msg "automatic-window-tiling helper source missing; skipping component."
+      return 1
+    fi
+    if is_root; then
+      install -m 0644 -o "$TARGET_USER" -g "$TARGET_USER" "$HOTKEY_TOOLS_LIB_DIR/$helper" "$lib_target/$helper"
+    else
+      install -m 0644 "$HOTKEY_TOOLS_LIB_DIR/$helper" "$lib_target/$helper"
+    fi
+  done
+  chmod 0755 "$lib_target/automatic_window_tiling.sh" 2>/dev/null || true
   OPEN_KITTY_SORT_SCRIPT_TARGET="$target"
 }
 

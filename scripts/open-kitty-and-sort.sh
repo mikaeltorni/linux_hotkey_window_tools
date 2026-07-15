@@ -25,6 +25,19 @@
 
 set -u
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$HOME/.local/share/linux_hotkey_window_tools/lib/automatic_window_tiling.sh" ]]; then
+  AUTOMATIC_WINDOW_TILING_LIB_DIR="$HOME/.local/share/linux_hotkey_window_tools/lib"
+elif [[ -f "$SCRIPT_DIR/../lib/automatic_window_tiling.sh" ]]; then
+  AUTOMATIC_WINDOW_TILING_LIB_DIR="$SCRIPT_DIR/../lib"
+else
+  AUTOMATIC_WINDOW_TILING_LIB_DIR=""
+fi
+if [[ -n "$AUTOMATIC_WINDOW_TILING_LIB_DIR" ]]; then
+  # shellcheck source=../lib/automatic_window_tiling.sh
+  source "$AUTOMATIC_WINDOW_TILING_LIB_DIR/automatic_window_tiling.sh"
+fi
+
 # Capture the workspace that is active WHEN the hotkey fires, so the new kitty
 # window can be pinned to it. On X11 xdotool reads the EWMH _NET_CURRENT_DESKTOP
 # property that GNOME Shell maintains. Without xdotool this is unavailable and
@@ -120,57 +133,24 @@ else
   fi
 fi
 
-# Resolve the window-sort (automatic-window-tiling) accelerator to trigger:
-#   1. OPEN_KITTY_SORT_HOTKEY env (friendly or GTK form)
-#   2. the automatic-window-tiling extension's configured binding, if installed
-#   3. the documented default <Super>t
-resolve_sort_accel() {
-  if [ -n "${OPEN_KITTY_SORT_HOTKEY:-}" ]; then
-    printf '%s' "$OPEN_KITTY_SORT_HOTKEY"
-    return
+if declare -F trigger_automatic_window_tiling >/dev/null 2>&1; then
+  if trigger_automatic_window_tiling; then
+    exit 0
   fi
-  local awt_dir="${HOME}/.local/share/gnome-shell/extensions/automatic-window-tiling@local"
-  if [ -d "$awt_dir/schemas" ]; then
-    local val first
-    val="$(gsettings --schemadir "$awt_dir/schemas" \
-      get org.gnome.shell.extensions.automatic-window-tiling \
-      tile-focused-application-windows 2>/dev/null || true)"
-    # gsettings prints a strv like ['<Super>t']; take the first single-quoted
-    # entry. An empty array ('@as []' or '[]') has no quote and is skipped.
-    if [[ "$val" == *\'* ]]; then
-      first="${val#*\'}"
-      first="${first%%\'*}"
-      if [ -n "$first" ]; then
-        printf '%s' "$first"
-        return
-      fi
-    fi
-  fi
-  printf '<Super>t'
-}
-
-# Convert a GTK accelerator ("<Super>t", "<Control><Alt>t", "<Super>less") into
-# an xdotool key spec ("super+t", "ctrl+alt+t", "super+less"). The key token is
-# preserved verbatim so named keysyms (less, Print, Left) stay valid for xdotool.
-gtk_to_xdotool() {
-  local a="$1"
-  a="${a//<Primary>/ctrl+}"
-  a="${a//<Control>/ctrl+}"
-  a="${a//<Alt>/alt+}"
-  a="${a//<Meta>/alt+}"
-  a="${a//<Super>/super+}"
-  a="${a//<Shift>/shift+}"
-  printf '%s' "$a"
-}
-
-accel="$(resolve_sort_accel)"
-
-if command -v xdotool >/dev/null 2>&1; then
-  xdotool key "$(gtk_to_xdotool "$accel")" 2>/dev/null || true
+  accel="$(resolve_sort_accel 2>/dev/null || printf '<Super>t')"
+  printf 'open-kitty-and-sort: automatic window tiling trigger failed (accel=%s).\n' "$accel" >&2
   exit 0
 fi
 
-# No X11 key simulator available (typical on a clean Wayland install). The kitty
-# window is already open; the auto-sort is skipped so the hotkey still has value.
+# Fallback when the shared helper is not deployed (dev checkout without lib path).
+accel="${OPEN_KITTY_SORT_HOTKEY:-<Super>t}"
+if command -v xdotool >/dev/null 2>&1; then
+  spec="${accel//<Super>/super+}"
+  spec="${spec//<Control>/ctrl+}"
+  spec="${spec//<Alt>/alt+}"
+  spec="${spec//<Shift>/shift+}"
+  xdotool key "$spec" 2>/dev/null || true
+  exit 0
+fi
 printf 'open-kitty-and-sort: no key simulator (xdotool) found; kitty opened, sort skipped (accel=%s).\n' "$accel" >&2
 exit 0
