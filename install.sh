@@ -83,12 +83,15 @@ initialize_target_user() {
 }
 
 # Orchestrate the install: always install the extension core, then route the
-# selected hotkey components through the framework.
+# selected hotkey components through the framework. Only the selected
+# components' own bindings are (re)written: a narrower rerun (e.g.
+# --select/--reconfigure of one hotkey) must never touch the accelerators of
+# components it does not name — removal is the framework's explicit
+# --uninstall path, which calls each component's uninstall_* function.
 main() {
   initialize_target_user
   install_log_info "starting install for target user '$TARGET_USER'"
   install_extension_core
-  clear_component_hotkeys
   component_main "$@"
   install_log_info "installed $EXTENSION_ID successfully"
   msg "Installed $EXTENSION_ID. Log out and back in if GNOME Shell has not loaded the extension."

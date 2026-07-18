@@ -64,9 +64,20 @@ def test_core_extension_install_is_unconditional():
     source = INSTALL.read_text(encoding="utf-8")
     main_body = source[source.index("main() {"):]
     install_idx = main_body.index("install_extension_core")
-    clear_idx = main_body.index("clear_component_hotkeys")
     component_idx = main_body.index("component_main")
-    assert install_idx < clear_idx < component_idx
+    assert install_idx < component_idx
+
+
+def test_install_never_blanket_clears_component_bindings():
+    # Regression: main() used to call a blanket clear_component_hotkeys before
+    # component routing, so a narrower rerun (--select/--reconfigure of one
+    # hotkey) wiped the accelerators of every other component and never
+    # restored them. Install runs must only (re)write the bindings of the
+    # components they name; removal is the framework's explicit uninstall path.
+    install = INSTALL.read_text(encoding="utf-8")
+    hotkey_tools = HOTKEY_TOOLS.read_text(encoding="utf-8")
+    assert "clear_component_hotkeys" not in install
+    assert "clear_component_hotkeys" not in hotkey_tools
 
 
 def test_schema_defaults_do_not_bind_optional_components():
@@ -88,7 +99,6 @@ def test_hotkey_library_defines_core_and_component_functions():
     source = HOTKEY_TOOLS.read_text(encoding="utf-8")
     for fn in (
         "install_extension_core()",
-        "clear_component_hotkeys()",
         "configure_move_hotkey()",
         "configure_resize_hotkey()",
         "release_conflicting_bindings()",
@@ -160,11 +170,23 @@ def test_open_kitty_sort_uses_custom_keybinding_not_schema():
     assert "/custom-keybindings/open-kitty-sort/" in source
 
 
-def test_clear_component_hotkeys_clears_custom_keybinding():
+def test_uninstall_open_kitty_sort_clears_custom_keybinding():
+    # The custom keybinding is removed only by the component's own uninstall
+    # function, never by a blanket clear during install.
     source = HOTKEY_TOOLS.read_text(encoding="utf-8")
-    start = source.index("clear_component_hotkeys() {")
+    start = source.index("uninstall_open_kitty_sort_hotkey() {")
     body = source[start : start + 400]
     assert "hwt_clear_custom_keybinding" in body
+
+
+def test_move_resize_uninstall_functions_clear_their_own_keys():
+    source = HOTKEY_TOOLS.read_text(encoding="utf-8")
+    assert re.search(
+        r'uninstall_move_hotkey\(\).*hwt_clear_key "drag-active-window-with-pointer"', source
+    )
+    assert re.search(
+        r'uninstall_resize_hotkey\(\).*hwt_clear_key "scale-active-window-from-center"', source
+    )
 
 
 def test_detect_routing_has_target_user_context():

@@ -29,11 +29,13 @@ The installer is component-based, built on the shared component framework
 downloaded on demand — never vendored, never a hard requirement):
 
 - **Core (always installed):** `install_extension_core` in `lib/hotkey_tools.sh`
-  copies the extension, compiles the schema, and enables the extension.
-  `clear_component_hotkeys` then clears the component-owned schema keys and the
-  open-kitty-sort GNOME custom keybinding before component routing, so the
-  extension is present no matter which hotkeys the user selects (including none)
-  and deselected hotkeys do not keep stale bindings.
+  copies the extension, compiles the schema, and enables the extension, so the
+  extension is present no matter which hotkeys the user selects (including
+  none). The core must never touch component-owned bindings: a narrower rerun
+  (e.g. `--select`/`--reconfigure` of one hotkey) only (re)writes the bindings
+  of the components it names. Removing a hotkey's binding is the framework's
+  explicit uninstall path (`--uninstall`, or uninstall marks in the interactive
+  menu), which calls the component's `uninstall_*` function.
 - **Hotkeys (optional, default-on, customizable):** each hotkey is a component in
   `installer/components.sh` mapped to a `configure_*` function. Honor the shared
   framework subcommands (`--list-components`, `--select`, `--default`, `--all`,

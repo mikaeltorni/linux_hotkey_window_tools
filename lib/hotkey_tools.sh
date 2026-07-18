@@ -49,21 +49,12 @@ GNOME_KEYBINDING_SCHEMAS=(
   "org.gnome.settings-daemon.plugins.media-keys"
 )
 
-# Extension keys owned by selectable hotkey components. Core installation clears
-# these before selected components set their requested accelerators, so
-# deselected components leave no stale binding behind.
-EXTENSION_HOTKEY_KEYS=(
-  "drag-active-window-with-pointer"
-  "scale-active-window-from-center"
-)
-
-# GNOME custom-keybinding owned by the open-kitty-and-sort component. Unlike the
-# hold-to-act pointer gestures above, this is a one-shot "launch kitty then sort"
+# GNOME custom-keybinding owned by the open-kitty-and-sort component. Unlike
+# the hold-to-act pointer gestures, this is a one-shot "launch kitty then sort"
 # command: it is bound as a stock GNOME custom keybinding (a relocatable
 # media-keys schema instance) that runs the helper script, NOT as a key on this
-# extension's schema. Core installation clears it (see hwt_clear_custom_keybinding)
-# so a deselected rerun leaves no stale launcher binding, then the component
-# re-registers it when selected.
+# extension's schema. The component (re)registers it when selected; the
+# component's uninstall_* function removes it (see hwt_clear_custom_keybinding).
 MEDIAKEYS_SCHEMA="org.gnome.settings-daemon.plugins.media-keys"
 MEDIAKEYS_CUSTOM_KEY="custom-keybindings"
 CUSTOM_KEYBINDING_REL_SCHEMA="org.gnome.settings-daemon.plugins.media-keys.custom-keybinding"
@@ -87,15 +78,6 @@ hotkey_tools_set_strv_value() {
   install_log_info "setting $SCHEMA_ID $key to '$accel'"
   run_as_target gsettings --schemadir "$EXTENSION_SCHEMA_DIR" \
     set "$SCHEMA_ID" "$key" "['${accel//\'/\\\'}']"
-}
-
-# Clear one extension schema key to an empty accelerator array.
-# Arguments: $1 - key name. Returns: 0.
-hotkey_tools_clear_strv_value() {
-  local key="$1"
-  install_log_info "clearing $SCHEMA_ID $key before component selection"
-  run_as_target gsettings --schemadir "$EXTENSION_SCHEMA_DIR" \
-    set "$SCHEMA_ID" "$key" "[]"
 }
 
 # Drop a value from a gsettings string-array key, keeping re-runs idempotent.
@@ -167,32 +149,19 @@ install_extension_core() {
   install_log_info "extension core installed"
 }
 
-# hwt_clear_custom_keybinding - remove a GNOME custom keybinding registration
-# so a deselected/rerun install never leaves a stale launcher binding. Drops the
-# path from the media-keys custom-keybindings list and resets the relocatable
+# hwt_clear_custom_keybinding - remove a GNOME custom keybinding registration.
+# Called from the component's uninstall_* function only: install runs must never
+# clear bindings of components they were not asked to touch. Drops the path from
+# the media-keys custom-keybindings list and resets the relocatable
 # name/command/binding keys. Best-effort: ignores failures when nothing is set.
 # Arguments: $1 - custom-keybinding settings path. Returns: 0.
 hwt_clear_custom_keybinding() {
   local path="$1"
-  install_log_info "clearing custom keybinding at $path before component selection"
+  install_log_info "clearing custom keybinding at $path"
   remove_strv_value "$MEDIAKEYS_SCHEMA" "$MEDIAKEYS_CUSTOM_KEY" "$path" 2>/dev/null || true
   run_as_target gsettings reset "$CUSTOM_KEYBINDING_REL_SCHEMA:$path" name 2>/dev/null || true
   run_as_target gsettings reset "$CUSTOM_KEYBINDING_REL_SCHEMA:$path" command 2>/dev/null || true
   run_as_target gsettings reset "$CUSTOM_KEYBINDING_REL_SCHEMA:$path" binding 2>/dev/null || true
-}
-
-# Clear every hotkey controlled by selectable components. This runs after the
-# core schema is installed and before component_main applies the chosen modules,
-# so a narrower rerun disables stale bindings from previously selected hotkeys.
-# Covers both the extension-schema keybindings (pointer move/resize) and the
-# GNOME custom keybinding owned by the open-kitty-and-sort component.
-# Arguments: none. Returns: 0.
-clear_component_hotkeys() {
-  local key
-  for key in "${EXTENSION_HOTKEY_KEYS[@]}"; do
-    hotkey_tools_clear_strv_value "$key"
-  done
-  hwt_clear_custom_keybinding "$OPEN_KITTY_SORT_CUSTOM_PATH"
 }
 
 # Choose the friendly hotkey spec for a component. An explicit environment
@@ -364,9 +333,9 @@ uninstall_resize_hotkey() { msg "Clearing resize-window hotkey"; hwt_clear_key "
 # (automatic-window-tiling) hotkey so the terminal is tiled with the other kitty
 # windows. It is bound as a stock GNOME custom keybinding that runs the helper
 # script scripts/open-kitty-and-sort.sh, NOT as a key on this extension's
-# schema, so it needs no GNOME Shell reload. The custom keybinding path is
-# cleared by clear_component_hotkeys before routing, then re-registered here when
-# the component is selected; detect/uninstall remove it on demand.
+# schema, so it needs no GNOME Shell reload. The custom keybinding is
+# (re)registered here when the component is selected; detect/uninstall remove
+# it on demand.
 
 # install_open_kitty_sort_script - copy the helper script to the target user's
 # ~/.local/bin so the custom keybinding's command can run it. Sets
