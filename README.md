@@ -11,9 +11,13 @@ place:
   ends it). The window is clamped inside the monitor work area.
 - **Resize (`<Alt><Super>E`)** — hold the chord and the focused window scales
   about its pinned center from its current size. Moving the pointer farther from
-  the center enlarges the window, and moving it back toward the center shrinks it,
-  on both axes at once. Scaling ends when you release Super (a mouse click or
-  Escape also ends it).
+  the center enlarges the window, and moving it back toward the center shrinks it.
+  Drag diagonally to scale both axes at once; drag straight sideways or straight
+  up/down and the gesture locks to that axis, so the other one keeps the size it
+  started at instead of drifting with your hand. The lock only engages after a
+  short committed movement and holds through small wobble, releasing again once
+  you clearly turn diagonal or onto the other axis. Scaling ends when you release
+  Super (a mouse click or Escape also ends it).
 - **Open kitty and sort (`<Super><`)** — press once to open a `kitty` terminal,
   wait briefly for it to map, then trigger the window-sort (automatic tiling)
   hotkey so the new terminal is tiled with the other kitty windows instead of

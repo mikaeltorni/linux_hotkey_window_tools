@@ -52,6 +52,66 @@ const SUPER_HELD_MASK = Clutter.ModifierType.MOD4_MASK | Clutter.ModifierType.SU
 const POINTER_DRAG_KEY = 'drag-active-window-with-pointer';
 const CENTER_SCALE_KEY = 'scale-active-window-from-center';
 
+// Axis intent for center scaling: 'none' scales both axes (corner intent),
+// 'horizontal' only changes the width, 'vertical' only changes the height.
+const AXIS_LOCK_NONE = 'none';
+const AXIS_LOCK_HORIZONTAL = 'horizontal';
+const AXIS_LOCK_VERTICAL = 'vertical';
+
+// Pointer travel (in px, along the dominant axis) required before an axis
+// intent is judged at all. Below this the hand has not committed to a
+// direction yet, so scaling stays free on both axes.
+const AXIS_LOCK_MIN_TRAVEL_PX = 24;
+// Enter a single-axis lock while the off-axis travel stays within this
+// fraction of the dominant axis travel (i.e. the drag is clearly straight).
+const AXIS_LOCK_ENTER_RATIO = 0.35;
+// Release an established lock only once the off-axis travel exceeds this
+// (larger) fraction. The gap between the two ratios is the hysteresis band
+// that keeps normal hand tremor from flickering the lock on and off.
+const AXIS_LOCK_EXIT_RATIO = 0.7;
+
+/**
+ * Decide which axis a center-scale drag is meant to resize.
+ *
+ * Pure helper: classifies the pointer's travel since the gesture started into
+ * a straight horizontal intent, a straight vertical intent, or a free
+ * (corner/diagonal) drag, using hysteresis so an established lock survives the
+ * small off-axis wobble of a human hand. A lock is only entered after
+ * AXIS_LOCK_MIN_TRAVEL_PX of dominant-axis travel and while the off-axis share
+ * is within AXIS_LOCK_ENTER_RATIO; it is only released once that share exceeds
+ * AXIS_LOCK_EXIT_RATIO, after which the drag may immediately re-lock onto the
+ * other axis or fall back to free diagonal scaling.
+ *
+ * @param {number} dx Pointer travel on X since the gesture started, in px.
+ * @param {number} dy Pointer travel on Y since the gesture started, in px.
+ * @param {string} currentLock Current lock: AXIS_LOCK_NONE, _HORIZONTAL or
+ *   _VERTICAL.
+ * @returns {string} The lock that should apply now (one of the same values).
+ */
+function resolveAxisLock(dx, dy, currentLock) {
+  const absX = Math.abs(dx);
+  const absY = Math.abs(dy);
+
+  // Not enough committed travel yet: behave exactly as before (free scaling).
+  if (Math.max(absX, absY) < AXIS_LOCK_MIN_TRAVEL_PX) {
+    return AXIS_LOCK_NONE;
+  }
+
+  // Hold an established lock through the hysteresis band.
+  if (currentLock === AXIS_LOCK_HORIZONTAL && absY <= AXIS_LOCK_EXIT_RATIO * absX) {
+    return AXIS_LOCK_HORIZONTAL;
+  }
+  if (currentLock === AXIS_LOCK_VERTICAL && absX <= AXIS_LOCK_EXIT_RATIO * absY) {
+    return AXIS_LOCK_VERTICAL;
+  }
+
+  // Otherwise judge the intent afresh: straight enough locks, diagonal frees.
+  if (absX >= absY) {
+    return absY <= AXIS_LOCK_ENTER_RATIO * absX ? AXIS_LOCK_HORIZONTAL : AXIS_LOCK_NONE;
+  }
+  return absX <= AXIS_LOCK_ENTER_RATIO * absY ? AXIS_LOCK_VERTICAL : AXIS_LOCK_NONE;
+}
+
 /**
  * Stop an in-progress pointer drag and settle the window in place.
  *
@@ -232,9 +292,12 @@ function stopCenterScale(state) {
  * Because the pointer starts half a frame away from the center on each axis,
  * the window keeps its current size when the resize begins and only changes
  * once the pointer moves — outward to enlarge, back toward the center to
- * shrink, on both axes independently and simultaneously. The size is clamped to
- * MIN_WINDOW_WIDTH/HEIGHT and to the largest extent that keeps the window
- * inside the work area around that fixed center.
+ * shrink. Diagonal (corner) drags scale both axes at once; a drag that stays
+ * clearly horizontal or vertical is axis-locked by resolveAxisLock() so only
+ * that axis resizes and the other one holds its starting size, which keeps a
+ * straight gesture from smearing hand tremor into the off axis. The size is
+ * clamped to MIN_WINDOW_WIDTH/HEIGHT and to the largest extent that keeps the
+ * window inside the work area around that fixed center.
  *
  * Scaling stays active only while Super is held (the chord is held down) and
  * ends as soon as Super is released; it also ends via stopCenterScale() on a
@@ -242,7 +305,9 @@ function stopCenterScale(state) {
  * move/resized. Errors are logged.
  *
  * @param {{timeoutId: ?number, window: ?Meta.Window, centerX: number,
- *   centerY: number, armed: boolean}} state Center scale state to populate.
+ *   centerY: number, armed: boolean, startPointerX: number,
+ *   startPointerY: number, startWidth: number, startHeight: number,
+ *   axisLock: string}} state Center scale state to populate.
  * @returns {void}
  */
 function startCenterScale(state) {
@@ -273,6 +338,14 @@ function startCenterScale(state) {
     // Only stop on Super release once we have actually seen Super held, so the
     // chord settling on the first poll cannot end scaling immediately.
     state.armed = false;
+    // Baseline for axis-intent detection: the pointer position the gesture
+    // starts from (the warp target below) and the size each locked-out axis
+    // must hold while the other axis is being resized.
+    state.startPointerX = state.centerX + Math.round(frame.width / 2);
+    state.startPointerY = state.centerY + Math.round(frame.height / 2);
+    state.startWidth = frame.width;
+    state.startHeight = frame.height;
+    state.axisLock = AXIS_LOCK_NONE;
     raiseWindow(win);
     // Warp the pointer to the window's bottom-right corner rather than its
     // center. Because the size tracks twice the pointer's offset from the
@@ -318,6 +391,25 @@ function startCenterScale(state) {
       // shrinks it, horizontally and vertically at once.
       let width = 2 * Math.abs(pointerX - state.centerX);
       let height = 2 * Math.abs(pointerY - state.centerY);
+
+      // Honor a straight drag: a clearly horizontal (or vertical) gesture must
+      // resize that axis only, instead of letting hand tremor on the other axis
+      // creep into the size. Diagonal drags keep the free corner behavior.
+      const previousLock = state.axisLock;
+      state.axisLock = resolveAxisLock(
+        pointerX - state.startPointerX,
+        pointerY - state.startPointerY,
+        previousLock,
+      );
+      if (state.axisLock !== previousLock) {
+        // State transition only — logging every 8ms poll would be spam.
+        logger.info(`center scale axis intent: ${previousLock} -> ${state.axisLock}`);
+      }
+      if (state.axisLock === AXIS_LOCK_HORIZONTAL) {
+        height = state.startHeight;
+      } else if (state.axisLock === AXIS_LOCK_VERTICAL) {
+        width = state.startWidth;
+      }
 
       // Largest half-size that keeps the window inside the work area while its
       // center stays fixed, so growing never nudges the pinned center.
