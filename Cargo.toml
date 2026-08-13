@@ -1,0 +1,11 @@
+[package]
+name = "hwt-tools"
+version = "0.1.0"
+edition = "2021"
+description = "Installer and runtime helpers for linux_hotkey_window_tools"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "hwt-tools"
+path = "src/main.rs"

@@ -77,7 +77,7 @@ new_wid=""
 if command -v xdotool >/dev/null 2>&1; then
   # Smart wait: poll every 100ms for a kitty window ID that was not in the
   # pre-launch list. The new window is detected the moment it is mapped.
-  iterations="$(python3 -c "print(max(1, int(float('${sort_timeout}') * 10)))" 2>/dev/null || echo 20)"
+  iterations="$(awk -v t="$sort_timeout" 'BEGIN { v=int(t*10); if (v<1) v=1; print v }')"
   for ((i = 0; i < iterations; i++)); do
     current="$(xdotool search --class kitty 2>/dev/null | sort || true)"
     if [ "$current" != "$preexisting_kitty_wids" ]; then

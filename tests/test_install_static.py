@@ -12,8 +12,8 @@ COMPONENTS = ROOT / "installer" / "components.sh"
 HOTKEY_TOOLS = ROOT / "lib" / "hotkey_tools.sh"
 SCHEMA = ROOT / "schemas" / "org.gnome.shell.extensions.window-move-resize.gschema.xml"
 OPEN_KITTY_SORT_SCRIPT = ROOT / "scripts" / "open-kitty-and-sort.sh"
-AUTOMATIC_WINDOW_TILING_PY = ROOT / "lib" / "automatic_window_tiling.py"
 AUTOMATIC_WINDOW_TILING_SH = ROOT / "lib" / "automatic_window_tiling.sh"
+HWT_TOOLS_SRC = ROOT / "src" / "main.rs"
 
 
 def test_installer_loads_shared_component_framework():
@@ -132,7 +132,8 @@ def test_hotkey_library_defines_open_kitty_sort_functions():
         "hwt_clear_custom_keybinding()",
     ):
         assert fn in source
-    assert "automatic_window_tiling.py" in source
+    assert "hwt-tools" in source
+    assert "python3" not in source
 
 
 def test_open_kitty_sort_is_customizable_via_environment():
@@ -142,8 +143,8 @@ def test_open_kitty_sort_is_customizable_via_environment():
 
 def test_open_kitty_sort_script_is_valid_bash_and_present():
     assert OPEN_KITTY_SORT_SCRIPT.is_file(), "open-kitty-and-sort.sh missing"
-    assert AUTOMATIC_WINDOW_TILING_PY.is_file(), "automatic_window_tiling.py missing"
     assert AUTOMATIC_WINDOW_TILING_SH.is_file(), "automatic_window_tiling.sh missing"
+    assert HWT_TOOLS_SRC.is_file(), "hwt-tools Rust source missing"
     source = OPEN_KITTY_SORT_SCRIPT.read_text(encoding="utf-8")
     assert "kitty" in source
     assert "xdotool" in source
