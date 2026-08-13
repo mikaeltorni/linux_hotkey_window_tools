@@ -42,11 +42,11 @@ downloaded on demand — never vendored, never a hard requirement):
   interactive menu); keep listing/help side-effect free (handled before the core
   install).
 - **Customization:** accelerators come from the friendly `modifier+key` syntax
-  via `lib/accelerator.py`. Resolution order is per-hotkey env var
+  via `hwt-tools accelerator`. Resolution order is per-hotkey env var
   (`MOVE_HOTKEY` / `RESIZE_HOTKEY` / `OPEN_KITTY_SORT_HOTKEY`) → interactive
   prompt on a TTY → built-in default, so automated/clean-install runs never
   block.
-- **Conflict release:** `lib/conflict_finder.py` normalizes accelerators
+- **Conflict release:** `hwt-tools conflicts` normalizes accelerators
   (order- and case-insensitive) so only the GNOME defaults that genuinely
   collide with a *chosen* accelerator are freed. Do not hardcode a fixed
   unbinding list.

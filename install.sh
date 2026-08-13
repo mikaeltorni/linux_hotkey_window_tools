@@ -60,6 +60,8 @@ fi
 isc_load_helpers
 isc_activate_components
 
+# shellcheck source=lib/hwt_bin.sh
+source "$SCRIPT_DIR/lib/hwt_bin.sh"
 # shellcheck source=lib/hotkey_tools.sh
 source "$SCRIPT_DIR/lib/hotkey_tools.sh"
 # shellcheck source=installer/components.sh

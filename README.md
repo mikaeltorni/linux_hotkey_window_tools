@@ -154,15 +154,11 @@ the auto-sort).
   configure function.
 - `lib/hotkey_tools.sh` — install library: extension-core install plus the
   per-hotkey configure functions and conflict release.
-- `lib/accelerator.py` — converts friendly `modifier+key` specs to GTK
-  accelerators and normalizes them for comparison.
-- `lib/conflict_finder.py` — detects GNOME default bindings that shadow a chosen
-  accelerator (order- and case-insensitive).
+- `hwt-tools` (Rust, `src/`) — converts friendly `modifier+key` specs to GTK
+  accelerators, finds conflicting GNOME bindings, updates GSettings string
+  arrays, and resolves/triggers the automatic-window-tiling hotkey.
 - `lib/bash_logging.sh` — centralized best-effort file logger for the Bash
   installer (writes to `.log/install.log`).
-- `lib/gsettings_strv.py` — tested string-array helper used by the installer.
-- `lib/log_utils.py` — centralized Python file logger and call-tracing
-  decorator for installer-side helpers (writes to `.log/`).
 - `scripts/open-kitty-and-sort.sh` — runtime helper bound to the
   open-kitty-and-sort GNOME custom keybinding: opens `kitty`, waits briefly,
   then triggers the window-sort (automatic tiling) hotkey.
@@ -174,14 +170,15 @@ the auto-sort).
   systemd journal).
 - `metadata.json` — extension metadata.
 - `schemas/` — gsettings schema and compiled binary.
-- `tests/` — pytest suite for the Python helpers and static installer checks.
+- `tests/` — Rust CLI tests plus pytest static installer/extension checks.
 - `.log/` — runtime logs from installer code and helpers (git-ignored).
 
 ## Deployment
 
 ```bash
 bash -n install.sh
-pytest tests/ -v
+cargo test
+python3 -m pytest tests/ -q
 sudo bash install.sh
 ```
 

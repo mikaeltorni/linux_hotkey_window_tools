@@ -87,7 +87,7 @@ remove_strv_value() {
   local schema="$1" key="$2" value="$3" current new_value
   install_log_info "ensuring gsettings value '$value' is absent at $schema $key"
   current="$(run_as_target gsettings get "$schema" "$key" 2>/dev/null || printf '[]')"
-  new_value="$(CURRENT="$current" python3 "$HOTKEY_TOOLS_LIB_DIR/gsettings_strv.py" remove "$value")"
+  new_value="$(CURRENT="$current" hwt_bin gsettings-strv remove "$value")"
   run_as_target gsettings set "$schema" "$key" "$new_value"
 }
 
@@ -98,7 +98,7 @@ append_strv_value() {
   local schema="$1" key="$2" value="$3" current new_value
   install_log_info "ensuring gsettings value '$value' is present at $schema $key"
   current="$(run_as_target gsettings get "$schema" "$key" 2>/dev/null || printf '[]')"
-  new_value="$(CURRENT="$current" python3 "$HOTKEY_TOOLS_LIB_DIR/gsettings_strv.py" append "$value")"
+  new_value="$(CURRENT="$current" hwt_bin gsettings-strv append "$value")"
   run_as_target gsettings set "$schema" "$key" "$new_value"
 }
 
@@ -214,7 +214,7 @@ release_conflicting_bindings() {
       remove_strv_value "$schema" "$key" "$stored"
     done < <(run_as_target gsettings list-recursively "$schema" 2>/dev/null \
               | sed -E "s/^${escaped} //" \
-              | python3 "$HOTKEY_TOOLS_LIB_DIR/conflict_finder.py" "$accel" 2>/dev/null)
+              | hwt_bin conflicts "$accel" 2>/dev/null)
   done
 }
 
@@ -228,22 +228,7 @@ hwt_conflict_candidates() {
   local schema
   for schema in "${GNOME_KEYBINDING_SCHEMAS[@]}"; do
     run_as_target gsettings list-recursively "$schema" 2>/dev/null
-  done | python3 - <<'PY' 2>/dev/null || true
-import ast, sys
-for line in sys.stdin:
-    line = line.rstrip("\n")
-    if not line.strip():
-        continue
-    try:
-        schema, key, raw = line.split(" ", 2)
-        values = ast.literal_eval(raw)
-    except Exception:
-        continue
-    if isinstance(values, list):
-        for accel in values:
-            if accel:
-                print(f"{schema} {key}\t{accel}")
-PY
+  done | hwt_bin conflict-candidates 2>/dev/null || true
 }
 
 apply_hotkey() {
@@ -262,7 +247,7 @@ apply_hotkey() {
     fi
   else
     spec="$(resolve_hotkey_spec "$env_var" "$default_spec" "$label")"
-    if ! accel="$(python3 "$HOTKEY_TOOLS_LIB_DIR/accelerator.py" "$spec" 2>/dev/null)"; then
+    if ! accel="$(hwt_bin accelerator "$spec" 2>/dev/null)"; then
       install_log_error "invalid hotkey spec '$spec' for $label"
       msg "Invalid hotkey '$spec' for $label; not binding this component."
       return 1
@@ -359,19 +344,22 @@ install_open_kitty_sort_script() {
   fi
   install_log_info "installing automatic-window-tiling shared helpers to $lib_target"
   install -d "$lib_target"
-  for helper in automatic_window_tiling.py automatic_window_tiling.sh log_utils.py; do
-    if [[ ! -f "$HOTKEY_TOOLS_LIB_DIR/$helper" ]]; then
-      install_log_error "shared helper missing at $HOTKEY_TOOLS_LIB_DIR/$helper"
-      msg "automatic-window-tiling helper source missing; skipping component."
-      return 1
-    fi
-    if is_root; then
-      install -m 0644 -o "$TARGET_USER" -g "$TARGET_USER" "$HOTKEY_TOOLS_LIB_DIR/$helper" "$lib_target/$helper"
-    else
-      install -m 0644 "$HOTKEY_TOOLS_LIB_DIR/$helper" "$lib_target/$helper"
-    fi
-  done
+  ensure_hwt_bin || return 1
+  if [[ ! -f "$HOTKEY_TOOLS_LIB_DIR/automatic_window_tiling.sh" ]]; then
+    install_log_error "shared helper missing at $HOTKEY_TOOLS_LIB_DIR/automatic_window_tiling.sh"
+    msg "automatic-window-tiling helper source missing; skipping component."
+    return 1
+  fi
+  if is_root; then
+    install -m 0644 -o "$TARGET_USER" -g "$TARGET_USER" \
+      "$HOTKEY_TOOLS_LIB_DIR/automatic_window_tiling.sh" "$lib_target/automatic_window_tiling.sh"
+    install -m 0755 -o "$TARGET_USER" -g "$TARGET_USER" "$HWT_BIN" "$lib_target/hwt-tools"
+  else
+    install -m 0644 "$HOTKEY_TOOLS_LIB_DIR/automatic_window_tiling.sh" "$lib_target/automatic_window_tiling.sh"
+    install -m 0755 "$HWT_BIN" "$lib_target/hwt-tools"
+  fi
   chmod 0755 "$lib_target/automatic_window_tiling.sh" 2>/dev/null || true
+  rm -f "$lib_target/automatic_window_tiling.py" "$lib_target/log_utils.py" "$lib_target/gsettings_strv.py"
   OPEN_KITTY_SORT_SCRIPT_TARGET="$target"
 }
 
@@ -401,7 +389,7 @@ configure_open_kitty_sort_hotkey() {
     fi
   else
     spec="$(resolve_hotkey_spec OPEN_KITTY_SORT_HOTKEY super+less "open kitty and sort windows")"
-    if ! accel="$(python3 "$HOTKEY_TOOLS_LIB_DIR/accelerator.py" "$spec" 2>/dev/null)"; then
+    if ! accel="$(hwt_bin accelerator "$spec" 2>/dev/null)"; then
       install_log_error "invalid hotkey spec '$spec' for open kitty and sort windows"
       msg "Invalid hotkey '$spec' for open kitty and sort windows; not binding this component."
       return 1
