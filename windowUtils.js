@@ -15,6 +15,9 @@
  *   - prepareWindowForMoveResize(): Clear states that block free positioning.
  *   - raiseWindow(): Raise + mark most-recently-used across API versions.
  *   - getWindowWorkArea(): Crash-safe work-area lookup for a window's monitor.
+ *   - getMonitorIndexAt(): Monitor containing an absolute screen point.
+ *   - getWorkAreaAt(): Work area of the monitor under an absolute point, so
+ *     gestures can follow the pointer across monitors.
  *   - warpPointer(): Move the pointer to an absolute screen position.
  *   - pointerDragReleaseEvent()/centerScaleEndEvent(): Gesture-end predicates.
  *
@@ -204,6 +207,75 @@ export function getWindowWorkArea(win) {
   }
 
   return win.get_work_area_for_monitor(monitorIndex);
+}
+
+/**
+ * Resolve the monitor that contains an absolute screen point.
+ *
+ * Monitor geometries are compared directly instead of using
+ * display.get_monitor_index_for_rect(), whose rectangle type moved between
+ * Meta and Mtk across GNOME 45-50. Points in the gaps between mismatched
+ * monitor edges belong to no monitor, so callers get -1 and can fall back to
+ * the window's own monitor rather than clamping against a bogus rectangle.
+ *
+ * @param {number} x Absolute X coordinate of the point.
+ * @param {number} y Absolute Y coordinate of the point.
+ * @returns {number} Zero-based index of the monitor under the point, or -1.
+ */
+export function getMonitorIndexAt(x, y) {
+  const monitorCount = global.display.get_n_monitors();
+  if (monitorCount <= 0) {
+    return -1;
+  }
+
+  for (let index = 0; index < monitorCount; index++) {
+    const geometry = global.display.get_monitor_geometry(index);
+    if (!geometry) {
+      continue;
+    }
+    if (x >= geometry.x && x < geometry.x + geometry.width
+      && y >= geometry.y && y < geometry.y + geometry.height) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+/**
+ * Get the work area of the monitor under an absolute screen point.
+ *
+ * This is what makes the hold-to-move gesture multi-monitor safe: clamping a
+ * dragged window against the work area of the monitor it currently sits on
+ * pins it to that monitor's edge, so it can never follow the pointer onto the
+ * next screen. Clamping against the monitor under the pointer instead lets the
+ * window cross freely and land fully inside the monitor the user dragged to.
+ * Falls back to the window's own monitor when the point is outside every
+ * monitor (mismatched-resolution gaps, pointer momentarily off-screen).
+ *
+ * @param {Meta.Window} win Window whose work area is requested (work areas are
+ *   per-window because struts differ per workspace).
+ * @param {number} x Absolute X coordinate of the point.
+ * @param {number} y Absolute Y coordinate of the point.
+ * @returns {Meta.Rectangle|null} Work area rectangle, or null when no monitor
+ *   is usable.
+ */
+export function getWorkAreaAt(win, x, y) {
+  if (!win) {
+    return null;
+  }
+
+  const monitorIndex = getMonitorIndexAt(x, y);
+  if (monitorIndex < 0) {
+    return getWindowWorkArea(win);
+  }
+
+  try {
+    return win.get_work_area_for_monitor(monitorIndex);
+  } catch (error) {
+    logger.error(`failed to read work area for monitor ${monitorIndex}: ${error}`);
+    return getWindowWorkArea(win);
+  }
 }
 
 /**

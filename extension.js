@@ -34,7 +34,7 @@ import {
   canMoveResizeWindow,
   prepareWindowForMoveResize,
   raiseWindow,
-  getWindowWorkArea,
+  getWorkAreaAt,
   warpPointer,
   pointerDragReleaseEvent,
   centerScaleEndEvent,
@@ -78,15 +78,26 @@ function stopPointerDrag(state) {
 
   try {
     prepareWindowForMoveResize(win);
-    const workArea = getWindowWorkArea(win);
+    const frame = win.get_frame_rect();
+
+    // Settle against the monitor the window visually landed on, found from its
+    // own center. win.get_monitor() can still report the monitor the drag
+    // started on until the compositor settles the move, which would yank a
+    // window dragged across screens back to where it came from on release.
+    const workArea = getWorkAreaAt(
+      win,
+      frame.x + Math.round(frame.width / 2),
+      frame.y + Math.round(frame.height / 2),
+    );
     if (!workArea) {
       return;
     }
-    const frame = win.get_frame_rect();
 
-    // Clamp to work area.
-    let x = Math.max(workArea.x, Math.min(frame.x, workArea.x + workArea.width - frame.width));
-    let y = Math.max(workArea.y, Math.min(frame.y, workArea.y + workArea.height - frame.height));
+    // Clamp to work area, top-left aligning windows too large for it.
+    const maxX = workArea.x + workArea.width - frame.width;
+    const maxY = workArea.y + workArea.height - frame.height;
+    const x = maxX < workArea.x ? workArea.x : Math.max(workArea.x, Math.min(frame.x, maxX));
+    const y = maxY < workArea.y ? workArea.y : Math.max(workArea.y, Math.min(frame.y, maxY));
 
     win.move_frame(true, x, y);
     raiseWindow(win);
@@ -171,13 +182,24 @@ function startPointerDrag(state) {
       let newX = pointerX - state.pointerX;
       let newY = pointerY - state.pointerY;
 
-      // Clamp to work area.
-      const workArea = getWindowWorkArea(win);
+      // Clamp to the work area of the monitor under the *pointer*, not the one
+      // the window currently sits on. Clamping against the window's own monitor
+      // pins it at that monitor's edge and the drag can never cross to another
+      // screen; following the pointer's monitor lets the window move across
+      // monitors and still land fully inside the destination's work area.
+      const workArea = getWorkAreaAt(win, pointerX, pointerY);
       if (!workArea) {
         return GLib.SOURCE_CONTINUE;
       }
-      newX = Math.max(workArea.x, Math.min(newX, workArea.x + workArea.width - win.get_frame_rect().width));
-      newY = Math.max(workArea.y, Math.min(newY, workArea.y + workArea.height - win.get_frame_rect().height));
+
+      // A window larger than the destination work area has a negative clamp
+      // range; align it to the top-left corner instead of letting the inverted
+      // min/max push it off-screen on a smaller monitor.
+      const frameRect = win.get_frame_rect();
+      const maxX = workArea.x + workArea.width - frameRect.width;
+      const maxY = workArea.y + workArea.height - frameRect.height;
+      newX = maxX < workArea.x ? workArea.x : Math.max(workArea.x, Math.min(newX, maxX));
+      newY = maxY < workArea.y ? workArea.y : Math.max(workArea.y, Math.min(newY, maxY));
 
       win.move_frame(true, newX, newY);
       raiseWindow(win);
@@ -292,7 +314,10 @@ function startCenterScale(state) {
       }
 
       const win = state.window;
-      const workArea = getWindowWorkArea(win);
+      // Use the monitor holding the pinned center: the window may have been
+      // dragged to another monitor moments ago, and win.get_monitor() only
+      // updates once the compositor settles the move.
+      const workArea = getWorkAreaAt(win, state.centerX, state.centerY);
       if (!workArea) {
         return GLib.SOURCE_CONTINUE;
       }

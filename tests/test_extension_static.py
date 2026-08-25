@@ -26,3 +26,16 @@ def test_gesture_starters_ignore_reentry_before_registering_timeout():
         assert guard_index != -1, f"{name}() must guard against active timeouts"
         assert timeout_index != -1, f"{name}() must register a timeout"
         assert guard_index < timeout_index, f"{name}() must guard before adding a timeout"
+
+
+def test_drag_clamps_against_the_monitor_under_the_pointer():
+    """Clamping against the window's own monitor pins it to that monitor's edge,
+    which makes dragging a window across monitors impossible."""
+    source = EXTENSION.read_text(encoding="utf-8")
+
+    assert "getWorkAreaAt(win, pointerX, pointerY)" in source, (
+        "the drag loop must clamp against the work area under the pointer"
+    )
+    assert "getWindowWorkArea(" not in source, (
+        "extension.js must not clamp gestures against the window's own monitor"
+    )
