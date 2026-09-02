@@ -61,3 +61,34 @@ def test_drag_ends_on_a_polled_pointer_button_release():
         "the drag poll must remember a seen button press so its release can end"
         " the gesture"
     )
+
+
+def test_a_drag_can_never_become_unstoppable():
+    """Arming only from inside the poll left a window glued to the pointer when
+    the chord was released within the first tick: state.armed stayed false, so
+    the Super-release exit never engaged."""
+    source = EXTENSION.read_text(encoding="utf-8")
+    body = _function_body(source, "startPointerDrag")
+
+    arm_index = body.find("state.armed = (")
+    timeout_index = body.find("GLib.timeout_add")
+    assert arm_index != -1, "the drag must arm from the modifier state at start"
+    assert arm_index < timeout_index, "arming must happen before the poll starts"
+    assert "GESTURE_ARM_GRACE_MS" in body, (
+        "the drag poll must give up when no hold is ever observed"
+    )
+
+
+def test_stop_pointer_drag_always_clears_the_dragged_window():
+    """Bailing out on a missing work area used to leave state.window set, so the
+    state kept a stale window reference after the gesture ended."""
+    source = EXTENSION.read_text(encoding="utf-8")
+    body = _function_body(source, "stopPointerDrag")
+
+    clear_index = body.find("state.window = null;")
+    bail_index = body.find("if (!workArea)")
+    assert clear_index != -1, "stopPointerDrag() must clear the dragged window"
+    assert bail_index != -1, "stopPointerDrag() must bail out on a missing work area"
+    assert clear_index < bail_index, (
+        "stopPointerDrag() must clear the window before any early return"
+    )
