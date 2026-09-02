@@ -57,6 +57,11 @@ const SUPER_HELD_MASK = Clutter.ModifierType.MOD4_MASK | Clutter.ModifierType.SU
 // pointer grab), so a click-to-drop exit built only on it never fires.
 const DRAG_BUTTON_MASK = Clutter.ModifierType.BUTTON1_MASK;
 
+// Center scaling ends on *any* mouse button, matching centerScaleEndEvent().
+const ANY_BUTTON_MASK = Clutter.ModifierType.BUTTON1_MASK
+  | Clutter.ModifierType.BUTTON2_MASK
+  | Clutter.ModifierType.BUTTON3_MASK;
+
 // A held gesture must always keep a way out. Both exits are conditional — the
 // Super exit needs Super to have been seen held, the click exit needs a button
 // press to have been seen — so a gesture that observes neither has no exit at
@@ -310,6 +315,25 @@ function stopCenterScale(state) {
 }
 
 /**
+ * End an active center scale from inside its own poll callback.
+ *
+ * Mirrors finishPointerDragFromPoll(): the source id is cleared before
+ * delegating to stopCenterScale(), because the poll removes its own source by
+ * returning SOURCE_REMOVE and removing it twice would double-free it.
+ *
+ * @param {{timeoutId: ?number, window: ?Meta.Window}} state Center scale state
+ *   owning the running poll.
+ * @param {string} reason Human-readable cause of the end, for the log.
+ * @returns {number} GLib.SOURCE_REMOVE, for the poll callback to return.
+ */
+function finishCenterScaleFromPoll(state, reason) {
+  state.timeoutId = null;
+  logger.info(`center scale ending (${reason})`);
+  stopCenterScale(state);
+  return GLib.SOURCE_REMOVE;
+}
+
+/**
  * Begin scaling the focused window about its center with the pointer.
  *
  * Pins the window's current center in place and warps the pointer to the
@@ -325,12 +349,16 @@ function stopCenterScale(state) {
  * inside the work area around that fixed center.
  *
  * Scaling stays active only while Super is held (the chord is held down) and
- * ends as soon as Super is released; it also ends via stopCenterScale() on a
- * mouse-button press or Escape. No-ops when the focused window cannot be
+ * ends as soon as Super is released or a mouse button is pressed, both detected
+ * from the polled modifier mask; Escape ends it too, best-effort, through the
+ * stage handler, which only sees the key when the shell has focus. When no hold
+ * is ever observed the poll gives up after GESTURE_ARM_GRACE_MS so scaling can
+ * never outlive its gesture. No-ops when the focused window cannot be
  * move/resized. Errors are logged.
  *
  * @param {{timeoutId: ?number, window: ?Meta.Window, centerX: number,
- *   centerY: number, armed: boolean}} state Center scale state to populate.
+ *   centerY: number, armed: boolean, buttonWasHeld: boolean,
+ *   startedAt: number}} state Center scale state to populate.
  * @returns {void}
  */
 function startCenterScale(state) {
@@ -355,12 +383,19 @@ function startCenterScale(state) {
     prepareWindowForMoveResize(win);
 
     const frame = win.get_frame_rect();
+    const [, , startMods] = global.get_pointer();
     state.window = win;
     state.centerX = Math.round(frame.x + frame.width / 2);
     state.centerY = Math.round(frame.y + frame.height / 2);
-    // Only stop on Super release once we have actually seen Super held, so the
-    // chord settling on the first poll cannot end scaling immediately.
-    state.armed = false;
+    // Arm the Super-release exit from the modifier state at the instant the
+    // chord fired rather than from the first poll, so releasing the chord inside
+    // that 8ms window cannot leave scaling armed-less and unstoppable.
+    state.armed = (startMods & SUPER_HELD_MASK) !== 0;
+    // Scaling ends on a button *press*, so only a fresh press counts: a button
+    // already down when scaling started must be released first.
+    state.buttonWasHeld = (startMods & ANY_BUTTON_MASK) !== 0;
+    // Reference point for the arming grace period below.
+    state.startedAt = GLib.get_monotonic_time();
     raiseWindow(win);
     // Warp the pointer to the window's bottom-right corner rather than its
     // center. Because the size tracks twice the pointer's offset from the
@@ -395,13 +430,25 @@ function startCenterScale(state) {
       if (superHeld) {
         state.armed = true;
       } else if (state.armed) {
-        // Clear without source_remove(): returning SOURCE_REMOVE removes this
-        // very source, so removing it here too would double-free.
-        state.timeoutId = null;
-        state.window = null;
-        raiseWindow(win);
-        logger.info('center scale ended (Super released)');
-        return GLib.SOURCE_REMOVE;
+        return finishCenterScaleFromPoll(state, 'Super released');
+      }
+
+      // Detect the ending click from the polled mask on a press *edge*. The
+      // stage 'captured-event' handler cannot be relied on for this: a press
+      // over an application window is delivered to that client, so the shell
+      // never sees it and scaling kept tracking the pointer after the click.
+      const buttonHeld = (mods & ANY_BUTTON_MASK) !== 0;
+      const buttonPressed = buttonHeld && !state.buttonWasHeld;
+      state.buttonWasHeld = buttonHeld;
+      if (buttonPressed) {
+        return finishCenterScaleFromPoll(state, 'mouse button pressed');
+      }
+
+      // Neither exit ever armed, so nothing below could end this gesture: stop
+      // instead of resizing the window against the pointer forever.
+      const heldFor = GLib.get_monotonic_time() - state.startedAt;
+      if (!state.armed && heldFor > GESTURE_ARM_GRACE_MS * 1000) {
+        return finishCenterScaleFromPoll(state, 'no hold detected');
       }
 
       // The window spans twice the pointer's offset from the pinned center on
@@ -464,6 +511,8 @@ export default class WindowMoveResizeExtension extends Extension {
       centerX: 0,
       centerY: 0,
       armed: false,
+      buttonWasHeld: false,
+      startedAt: 0,
     };
 
     this._capturedEventId = global.stage.connect('captured-event', (actor, event) => {

@@ -92,3 +92,36 @@ def test_stop_pointer_drag_always_clears_the_dragged_window():
     assert clear_index < bail_index, (
         "stopPointerDrag() must clear the window before any early return"
     )
+
+
+def test_center_scale_ends_from_the_polled_button_mask_too():
+    """Center scaling ended on a mouse press only through the stage handler, so
+    it was stuck in exactly the same way the drag was: on Wayland the press
+    lands in the application and the stage never sees it."""
+    source = EXTENSION.read_text(encoding="utf-8")
+
+    assert "ANY_BUTTON_MASK" in source, (
+        "center scale needs a polled any-button mask to end on a press"
+    )
+
+    body = _function_body(source, "startCenterScale")
+    assert "ANY_BUTTON_MASK" in body, (
+        "the center scale poll must test the button mask on every tick"
+    )
+    assert "state.buttonWasHeld" in body, (
+        "center scale must end on a button press edge, not on a button that was"
+        " already held when scaling started"
+    )
+
+
+def test_center_scale_can_never_become_unstoppable():
+    source = EXTENSION.read_text(encoding="utf-8")
+    body = _function_body(source, "startCenterScale")
+
+    arm_index = body.find("state.armed = (")
+    timeout_index = body.find("GLib.timeout_add")
+    assert arm_index != -1, "center scale must arm from the modifier state at start"
+    assert arm_index < timeout_index, "arming must happen before the poll starts"
+    assert "GESTURE_ARM_GRACE_MS" in body, (
+        "the center scale poll must give up when no hold is ever observed"
+    )
