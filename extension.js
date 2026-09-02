@@ -49,6 +49,14 @@ const MIN_WINDOW_HEIGHT = 120;
 // stay active only while Super is held (the <Super> in <Alt><Super>W / E).
 const SUPER_HELD_MASK = Clutter.ModifierType.MOD4_MASK | Clutter.ModifierType.SUPER_MASK;
 
+// Modifier bit global.get_pointer() reports while the left mouse button is
+// held. Gesture ends are detected from this polled mask rather than from the
+// stage's 'captured-event' signal alone, because Mutter delivers a click that
+// lands on an application window straight to that client: the stage never sees
+// the BUTTON_RELEASE (always on Wayland, and on X11 whenever the shell holds no
+// pointer grab), so a click-to-drop exit built only on it never fires.
+const DRAG_BUTTON_MASK = Clutter.ModifierType.BUTTON1_MASK;
+
 const POINTER_DRAG_KEY = 'drag-active-window-with-pointer';
 const CENTER_SCALE_KEY = 'scale-active-window-from-center';
 
@@ -110,6 +118,28 @@ function stopPointerDrag(state) {
 }
 
 /**
+ * End an active pointer drag from inside its own poll callback.
+ *
+ * The poll is about to drop its GLib source by returning SOURCE_REMOVE, so the
+ * source id is cleared before delegating to stopPointerDrag(): calling
+ * GLib.source_remove() on the source that is currently dispatching would
+ * double-free it. Routing through stopPointerDrag() means every gesture end
+ * settles the window the same way — clamped into the work area of the monitor
+ * it visually landed on, then raised.
+ *
+ * @param {{timeoutId: ?number, window: ?Meta.Window}} state Pointer drag state
+ *   owning the running poll.
+ * @param {string} reason Human-readable cause of the end, for the log.
+ * @returns {number} GLib.SOURCE_REMOVE, for the poll callback to return.
+ */
+function finishPointerDragFromPoll(state, reason) {
+  state.timeoutId = null;
+  logger.info(`pointer drag ending (${reason})`);
+  stopPointerDrag(state);
+  return GLib.SOURCE_REMOVE;
+}
+
+/**
  * Begin dragging the focused window with the pointer.
  *
  * Records the pointer-to-frame offset and installs a periodic timeout
@@ -119,7 +149,8 @@ function stopPointerDrag(state) {
  * active or the focused window cannot be moved. Errors are logged.
  *
  * @param {{timeoutId: ?number, window: ?Meta.Window, pointerX: number,
- *   pointerY: number, armed: boolean}} state Pointer drag state to populate.
+ *   pointerY: number, armed: boolean, buttonHeld: boolean}} state Pointer drag
+ *   state to populate.
  * @returns {void}
  */
 function startPointerDrag(state) {
@@ -152,6 +183,9 @@ function startPointerDrag(state) {
     // Only auto-stop on Super release once Super has actually been seen held,
     // so the chord settling on the first poll cannot end the drag instantly.
     state.armed = false;
+    // A click ends the drag on the button's *release*, so a press has to be
+    // observed first; start every drag with no press remembered.
+    state.buttonHeld = false;
     logger.info('pointer drag started');
 
     // Start a timeout to handle the drag.
@@ -170,13 +204,20 @@ function startPointerDrag(state) {
       if (superHeld) {
         state.armed = true;
       } else if (state.armed) {
-        // Clear without source_remove(): returning SOURCE_REMOVE removes this
-        // very source, so removing it here too would double-free.
-        state.timeoutId = null;
-        state.window = null;
-        raiseWindow(win);
-        logger.info('pointer drag ended (Super released)');
-        return GLib.SOURCE_REMOVE;
+        return finishPointerDragFromPoll(state, 'Super released');
+      }
+
+      // Click-to-drop is decided here, from the polled button mask, and not by
+      // the stage 'captured-event' handler alone: that handler never receives
+      // the BUTTON_RELEASE of a click that lands on an application window, so
+      // relying on it left the window glued to the pointer after the click was
+      // already let go. Ending on release (not press) keeps the documented
+      // gesture: press the button, then let go to drop the window.
+      const buttonHeld = (mods & DRAG_BUTTON_MASK) !== 0;
+      if (buttonHeld) {
+        state.buttonHeld = true;
+      } else if (state.buttonHeld) {
+        return finishPointerDragFromPoll(state, 'left button released');
       }
 
       let newX = pointerX - state.pointerX;
@@ -389,6 +430,7 @@ export default class WindowMoveResizeExtension extends Extension {
       pointerX: 0,
       pointerY: 0,
       armed: false,
+      buttonHeld: false,
     };
     this._centerScaleState = {
       timeoutId: null,
