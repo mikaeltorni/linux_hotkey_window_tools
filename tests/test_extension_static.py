@@ -39,3 +39,25 @@ def test_drag_clamps_against_the_monitor_under_the_pointer():
     assert "getWindowWorkArea(" not in source, (
         "extension.js must not clamp gestures against the window's own monitor"
     )
+
+
+def test_drag_ends_on_a_polled_pointer_button_release():
+    """The stage 'captured-event' handler never sees a click that lands on an
+    application window (always on Wayland, and on X11 without a shell grab), so
+    the drag must detect the button release from the polled modifier mask.
+    Without this the window keeps following the pointer after the click is let
+    go — the drag can only be escaped by releasing Super."""
+    source = EXTENSION.read_text(encoding="utf-8")
+
+    assert "Clutter.ModifierType.BUTTON1_MASK" in source, (
+        "the drag must read the left-button bit from the polled modifier mask"
+    )
+
+    body = _function_body(source, "startPointerDrag")
+    assert "DRAG_BUTTON_MASK" in body, (
+        "the drag poll must test the left-button mask on every tick"
+    )
+    assert "state.buttonHeld" in body, (
+        "the drag poll must remember a seen button press so its release can end"
+        " the gesture"
+    )
