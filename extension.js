@@ -57,6 +57,13 @@ const SUPER_HELD_MASK = Clutter.ModifierType.MOD4_MASK | Clutter.ModifierType.SU
 // pointer grab), so a click-to-drop exit built only on it never fires.
 const DRAG_BUTTON_MASK = Clutter.ModifierType.BUTTON1_MASK;
 
+// A held gesture must always keep a way out. Both exits are conditional — the
+// Super exit needs Super to have been seen held, the click exit needs a button
+// press to have been seen — so a gesture that observes neither has no exit at
+// all and would follow the pointer until the Shell is restarted. Give every
+// gesture this long to observe its hold, then end it instead of running on.
+const GESTURE_ARM_GRACE_MS = 600;
+
 const POINTER_DRAG_KEY = 'drag-active-window-with-pointer';
 const CENTER_SCALE_KEY = 'scale-active-window-from-center';
 
@@ -83,6 +90,11 @@ function stopPointerDrag(state) {
   if (!win) {
     return;
   }
+
+  // Drop the reference up front: the settle below can bail out early (no usable
+  // work area), and leaving state.window set past that return kept a stale
+  // window on a gesture that had already ended.
+  state.window = null;
 
   try {
     prepareWindowForMoveResize(win);
@@ -113,8 +125,6 @@ function stopPointerDrag(state) {
   } catch (error) {
     logger.error(`failed to stop pointer drag: ${error}`);
   }
-
-  state.window = null;
 }
 
 /**
@@ -143,14 +153,16 @@ function finishPointerDragFromPoll(state, reason) {
  * Begin dragging the focused window with the pointer.
  *
  * Records the pointer-to-frame offset and installs a periodic timeout
- * (POINTER_POLL_INTERVAL_MS) that follows the pointer. The drag is held: it
- * ends as soon as Super is released (mirroring center scaling), and also via
- * stopPointerDrag() on a left-button release. No-ops when a drag is already
- * active or the focused window cannot be moved. Errors are logged.
+ * (POINTER_POLL_INTERVAL_MS) that follows the pointer. The drag is held: the
+ * same poll watches the modifier mask and ends the drag as soon as Super is
+ * released (mirroring center scaling) or a pressed left button is let go, and
+ * gives up entirely when neither hold shows up within GESTURE_ARM_GRACE_MS, so
+ * a drag can never outlive the gesture that started it. No-ops when a drag is
+ * already active or the focused window cannot be moved. Errors are logged.
  *
  * @param {{timeoutId: ?number, window: ?Meta.Window, pointerX: number,
- *   pointerY: number, armed: boolean, buttonHeld: boolean}} state Pointer drag
- *   state to populate.
+ *   pointerY: number, armed: boolean, buttonHeld: boolean, startedAt: number}}
+ *   state Pointer drag state to populate.
  * @returns {void}
  */
 function startPointerDrag(state) {
@@ -176,16 +188,21 @@ function startPointerDrag(state) {
   try {
     prepareWindowForMoveResize(win);
     state.window = win;
-    const [pointerX, pointerY] = global.get_pointer();
+    const [pointerX, pointerY, startMods] = global.get_pointer();
     const frame = win.get_frame_rect();
     state.pointerX = pointerX - frame.x;
     state.pointerY = pointerY - frame.y;
-    // Only auto-stop on Super release once Super has actually been seen held,
-    // so the chord settling on the first poll cannot end the drag instantly.
-    state.armed = false;
-    // A click ends the drag on the button's *release*, so a press has to be
-    // observed first; start every drag with no press remembered.
-    state.buttonHeld = false;
+    // Arm the Super-release exit from the modifier state at the instant the
+    // chord fired, not from the first poll 8ms later. Waiting for the poll lost
+    // the race whenever the chord was released inside that window: state.armed
+    // stayed false, the Super exit never engaged, and the window followed the
+    // pointer with no way to stop it.
+    state.armed = (startMods & SUPER_HELD_MASK) !== 0;
+    // A click ends the drag on the button's *release*, so a press has to be seen
+    // first — including one already held when the drag started.
+    state.buttonHeld = (startMods & DRAG_BUTTON_MASK) !== 0;
+    // Reference point for the arming grace period below.
+    state.startedAt = GLib.get_monotonic_time();
     logger.info('pointer drag started');
 
     // Start a timeout to handle the drag.
@@ -218,6 +235,14 @@ function startPointerDrag(state) {
         state.buttonHeld = true;
       } else if (state.buttonHeld) {
         return finishPointerDragFromPoll(state, 'left button released');
+      }
+
+      // Neither exit ever armed: no hold has been observed since the drag
+      // started, so nothing that follows could ever end it. Stop rather than
+      // drag the window around forever.
+      const heldFor = GLib.get_monotonic_time() - state.startedAt;
+      if (!state.armed && !state.buttonHeld && heldFor > GESTURE_ARM_GRACE_MS * 1000) {
+        return finishPointerDragFromPoll(state, 'no hold detected');
       }
 
       let newX = pointerX - state.pointerX;
@@ -431,6 +456,7 @@ export default class WindowMoveResizeExtension extends Extension {
       pointerY: 0,
       armed: false,
       buttonHeld: false,
+      startedAt: 0,
     };
     this._centerScaleState = {
       timeoutId: null,
