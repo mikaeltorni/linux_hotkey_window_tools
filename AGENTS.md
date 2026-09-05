@@ -66,16 +66,6 @@ kill the Shell to force the change through.
 Installer-side gsettings changes (`install.sh`) apply live on the next install
 run; they do not need a Shell reload.
 
-## Clean Installation Compatibility
-
-All changes must remain compatible with a clean installation run through
-`installation_scripts/install.sh` and this repository's `install.sh`. The
-installer follows the root-optional (sudo-free) pattern: `bash install.sh`
-must complete as the desktop user, and `sudo bash install.sh` must also work
-for the clean-install chain. Do not rely on packages, files, or settings that
-exist only on the current machine.
-
-
 ## Mandatory programming guidelines prompt
 
 When generic agent defaults conflict with this file or the shared
