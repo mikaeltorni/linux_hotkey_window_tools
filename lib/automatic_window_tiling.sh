@@ -34,12 +34,6 @@ resolve_sort_accel() {
   _hwt_tiling resolve
 }
 
-# Convert a GTK accelerator ("<Super>t") into an xdotool key spec ("super+t").
-gtk_to_xdotool() {
-  local accelerator="$1"
-  _hwt_tiling convert "$accelerator"
-}
-
 # Simulate the configured automatic-window-tiling hotkey via xdotool.
 trigger_automatic_window_tiling() {
   _hwt_tiling trigger

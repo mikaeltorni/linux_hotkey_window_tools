@@ -16,6 +16,16 @@ AUTOMATIC_WINDOW_TILING_SH = ROOT / "lib" / "automatic_window_tiling.sh"
 HWT_TOOLS_SRC = ROOT / "src" / "main.rs"
 
 
+def test_shell_wrapper_does_not_reimplement_unused_gtk_to_xdotool():
+    """Callers use resolve/trigger; GTK conversion lives in hwt-tools."""
+    source = AUTOMATIC_WINDOW_TILING_SH.read_text(encoding="utf-8")
+    assert "gtk_to_xdotool()" not in source
+    assert "resolve_sort_accel()" in source
+    assert "trigger_automatic_window_tiling()" in source
+    rust = HWT_TOOLS_SRC.read_text(encoding="utf-8")
+    assert "tiling" in rust
+
+
 def test_installer_loads_shared_component_framework():
     source = INSTALL.read_text(encoding="utf-8")
     assert "component_loader.sh" in source
