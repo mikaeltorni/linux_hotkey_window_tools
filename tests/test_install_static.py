@@ -34,11 +34,12 @@ def test_installer_loads_shared_component_framework():
     assert 'source "$SCRIPT_DIR/installer/components.sh"' in source
 
 
-def test_standalone_framework_bootstrap_supports_curl_or_wget():
+def test_standalone_framework_bootstrap_clones_private_repository():
     source = INSTALL.read_text(encoding="utf-8")
-    assert "command -v curl" in source
-    assert "command -v wget" in source
-    assert "curl or wget is required" in source
+    assert "GIT_TERMINAL_PROMPT=0 git clone" in source
+    assert "ISC_FUNCTIONS_DIR=\"${__isc_framework_loader%/*}\"" in source
+    assert "framework-${__isc_framework_key}" in source
+    assert "raw.githubusercontent.com/mikaeltorni/linux_installation_scripts_functions" not in source
 
 
 def test_installer_routes_through_component_main():
