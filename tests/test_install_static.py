@@ -27,19 +27,32 @@ def test_shell_wrapper_does_not_reimplement_unused_gtk_to_xdotool():
 
 
 def test_installer_loads_shared_component_framework():
+    """Require shared offline support at the installer boundary.
+
+    Parameters: none.
+    Returns: None.
+    """
+    print('parameters=none')
     source = INSTALL.read_text(encoding="utf-8")
-    assert "component_loader.sh" in source
-    assert "isc_load_helpers" in source
-    assert "isc_activate_components" in source
+    assert '.installer-support/bootstrap.sh' in source
+    assert 'isc_load_helpers' in source
+    assert 'isc_activate_components' in source
     assert 'source "$SCRIPT_DIR/installer/components.sh"' in source
+    print(None)
 
 
-def test_standalone_framework_bootstrap_clones_private_repository():
+def test_standalone_framework_uses_packaged_support():
+    """Require shared offline support at the installer boundary.
+
+    Parameters: none.
+    Returns: None.
+    """
+    print('parameters=none')
     source = INSTALL.read_text(encoding="utf-8")
-    assert "GIT_TERMINAL_PROMPT=0 git clone" in source
-    assert "ISC_FUNCTIONS_DIR=\"${__isc_framework_loader%/*}\"" in source
-    assert "framework-${__isc_framework_key}" in source
-    assert "raw.githubusercontent.com/mikaeltorni/linux_installation_scripts_functions" not in source
+    assert '.installer-support/bootstrap.sh' in source
+    assert 'raw.githubusercontent.com/mikaeltorni/linux_installation_scripts_functions' not in source
+    assert 'GIT_TERMINAL_PROMPT=0 git clone' not in source
+    print(None)
 
 
 def test_installer_routes_through_component_main():
