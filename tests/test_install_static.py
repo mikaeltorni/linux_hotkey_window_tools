@@ -56,8 +56,15 @@ def test_standalone_framework_uses_packaged_support():
 
 
 def test_installer_routes_through_component_main():
+    """Route accepted plans through the shared component operations.
+
+    Parameters: none.
+    Returns: None.
+    """
+    print('parameters=none')
     source = INSTALL.read_text(encoding="utf-8")
-    assert "component_main" in source
+    assert 'isc_plan_install' in source and '_isc_apply_plan' in source
+    print(None)
 
 
 def test_listing_is_handled_before_core_install():
@@ -97,13 +104,18 @@ def test_listing_is_handled_before_target_user_initialization():
 
 
 def test_core_extension_install_is_unconditional():
-    # The extension core installs in main() regardless of component selection so
-    # the program is present no matter what the user chooses.
+    """Install the core for accepted installation plans before selected bindings.
+
+    Parameters: none.
+    Returns: None.
+    """
+    print('parameters=none')
     source = INSTALL.read_text(encoding="utf-8")
     main_body = source[source.index("main() {"):]
-    install_idx = main_body.index("install_extension_core")
-    component_idx = main_body.index("component_main")
-    assert install_idx < component_idx
+    assert main_body.index('isc_plan_install') < main_body.index('install_extension_core')
+    assert '"$ISC_PLAN_ACTION" == install' in main_body
+    assert main_body.index('install_extension_core') < main_body.index('_isc_apply_plan')
+    print(None)
 
 
 def test_install_never_blanket_clears_component_bindings():
