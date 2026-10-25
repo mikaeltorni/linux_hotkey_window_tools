@@ -100,8 +100,6 @@ if [[ -z "${TARGET_HOME:-}" ]]; then TARGET_HOME="$HOME"; fi
 # Listing/help must print only their own output (the master installer parses
 # --list-components) and stay side-effect free: handle them before the core
 # install runs.
-case "${1:-}" in
-  --list-components|--export-selection|--detect|--help|-h|--uninstall|--uninstall=*) component_main "$@"; exit $? ;;
-esac
+if isc_route_readonly_args "$@"; then exit $?; fi
 
 main "$@"

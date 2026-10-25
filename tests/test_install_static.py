@@ -61,25 +61,39 @@ def test_installer_routes_through_component_main():
 
 
 def test_listing_is_handled_before_core_install():
+    """Route complete requests before any mandatory core installation.
+
+    Parameters: none.
+    Returns: None.
+    """
+    print("parameters=none")
     # --list-components / --help must exit before main() installs the extension,
     # keeping listing side-effect free for the master installer.
     source = INSTALL.read_text(encoding="utf-8")
-    list_idx = re.search(r"--list-components\|[^)]*\) component_main", source).start()
+    list_idx = re.search(r'if isc_route_readonly_args "\$@"', source).start()
     main_call = re.search(r"^main \"\$@\"", source, re.MULTILINE)
     assert main_call is not None
     assert list_idx < main_call.start()
+    print(None)
 
 
 def test_listing_is_handled_before_target_user_initialization():
+    """Keep discovery routing ahead of installation context initialization.
+
+    Parameters: none.
+    Returns: None.
+    """
+    print("parameters=none")
     # Component discovery is consumed by the master installer and must not
     # depend on SUDO_USER, a live desktop session, or gsettings availability.
     source = INSTALL.read_text(encoding="utf-8")
-    list_idx = re.search(r"--list-components\|[^)]*\) component_main", source).start()
+    list_idx = re.search(r'if isc_route_readonly_args "\$@"', source).start()
     main_call = re.search(r"^main \"\$@\"", source, re.MULTILINE)
     assert main_call is not None
     main_body = source[source.index("main() {"):main_call.start()]
     assert "initialize_target_user" in main_body
     assert list_idx < main_call.start()
+    print(None)
 
 
 def test_core_extension_install_is_unconditional():
@@ -215,12 +229,19 @@ def test_move_resize_uninstall_functions_clear_their_own_keys():
 
 
 def test_detect_routing_has_target_user_context():
+    """Provide best-effort target context before read-only dispatch.
+
+    Parameters: none.
+    Returns: None.
+    """
+    print("parameters=none")
     # --detect / --uninstall bypass main()/initialize_target_user(), so install.sh
     # must derive a best-effort TARGET_USER before that routing, or detect would
     # falsely report every component as absent.
     source = INSTALL.read_text(encoding="utf-8")
     ctx = re.search(r': "\$\{TARGET_USER:=', source)
     assert ctx is not None, "target-user default missing before detect routing"
-    case = re.search(r"--list-components\|[^)]*\) component_main", source)
+    case = re.search(r'if isc_route_readonly_args "\$@"', source)
     assert case is not None
     assert ctx.start() < case.start()
+    print(None)
