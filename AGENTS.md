@@ -25,8 +25,9 @@ default.
 ## Installer architecture (core + selectable hotkeys)
 
 The installer is component-based, built on the shared component framework
-(`linux_installation_scripts_functions`, resolved from a sibling checkout or
-downloaded on demand — never vendored, never a hard requirement):
+(`linux_installation_scripts_functions`). The generated, licensed
+`.installer-support/` package keeps standalone installation independent of a
+sibling checkout or private download; regenerate it from the framework owner:
 
 - **Core (always installed):** `install_extension_core` in `lib/hotkey_tools.sh`
   copies the extension, compiles the schema, and enables the extension, so the
