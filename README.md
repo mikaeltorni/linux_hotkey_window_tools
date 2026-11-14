@@ -61,9 +61,10 @@ sudo bash install.sh   # also supported (used by the clean-install chain)
 
 The extension core (files + compiled gsettings schema, enabled) installs into
 `~/.local/share/gnome-shell/extensions/window-move-resize@local` regardless of
-which hotkeys you select. During each install run, component-owned bindings are
-cleared first; each selected hotkey then has its accelerator applied, and any
-GNOME default binding that collides with that accelerator is freed.
+which hotkeys you select. An install or reconfigure run updates only the selected
+hotkeys and frees GNOME default bindings that collide with their accelerators.
+Unselected component bindings remain unchanged; uninstall removes the selected
+bindings.
 
 After installation, log out and back in before testing GNOME Shell extension
 changes. Do not reload GNOME Shell extensions from an active Wayland session.
@@ -148,8 +149,7 @@ the auto-sort).
 ## Project Structure
 
 - `install.sh` — standalone, component-based installer (root-optional); installs
-  the extension core, clears component-owned bindings, then routes selected
-  hotkeys through the shared framework.
+  the extension core, then routes selected hotkeys through the shared framework.
 - `installer/components.sh` — component manifest mapping each hotkey id to its
   configure function.
 - `lib/hotkey_tools.sh` — install library: extension-core install plus the
