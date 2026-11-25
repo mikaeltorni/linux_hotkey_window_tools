@@ -1,6 +1,25 @@
-# Linux Hotkey Window Tools
+# Linux Hotkey Window Tools — GNOME pointer move and resize
 
-> Part of [installation_scripts](https://github.com/mikaeltorni/installation_scripts) — the master installer that orchestrates a productivity-focused Ubuntu 24.04 desktop setup. Tested on Ubuntu 24.04.4 LTS.
+Linux Hotkey Window Tools is a GNOME pointer move and resize extension for users who want
+hold-to-act shortcuts for positioning and scaling the focused window.
+
+[![Last commit](https://img.shields.io/github/last-commit/mikaeltorni/linux_hotkey_window_tools)](https://github.com/mikaeltorni/linux_hotkey_window_tools/commits/master)
+[![Commit activity](https://img.shields.io/github/commit-activity/m/mikaeltorni/linux_hotkey_window_tools)](https://github.com/mikaeltorni/linux_hotkey_window_tools/graphs/commit-activity)
+[![Issues](https://img.shields.io/github/issues/mikaeltorni/linux_hotkey_window_tools)](https://github.com/mikaeltorni/linux_hotkey_window_tools/issues)
+
+[Installation](#installation) · [Configuration](#configuration) · [Deployment](#deployment) · [Installer commands](#installer-lifecycle) · [MIT license](LICENSE.md)
+
+## Quick start
+
+Run as the desktop user in GNOME. The selected components configure the move and resize shortcuts.
+
+```bash
+bash install.sh --list-components
+bash install.sh --select move_hotkey,resize_hotkey
+bash install.sh --detect
+```
+
+The Ubuntu 24.04.5 GNOME 46 X11 workstation VM detected the selected defaults and an active move/resize extension.
 
 A standalone GNOME Shell extension that adds two pointer-driven, hold-to-act
 window hotkeys, plus a one-shot launcher that opens a terminal and sorts it into
@@ -39,8 +58,7 @@ any other setup repository. It is *consumed by* `linux_hotkey_setup`, which
 installs it by default when it sits beside it in the projects directory; that is
 a one-way relationship and does not create a dependency in this direction.
 
-See the full cross-repository map in
-[installation_scripts/DEPENDENCIES.md](https://github.com/mikaeltorni/installation_scripts/blob/master/DEPENDENCIES.md).
+[Linux Automatic Window Tiling](https://github.com/mikaeltorni/linux_automatic_window_tiling) supplies the optional tiling action used by the Kitty launcher. [Linux Monitor & Window Hotkeys](https://github.com/mikaeltorni/linux_monitor_window_hotkeys) provides numbered monitor movement.
 
 ## Technology Stack
 
@@ -210,6 +228,28 @@ You are solely responsible for determining whether this software is suitable, sa
 The authors and copyright holders make no guarantees regarding security, reliability, availability, correctness, compliance, non-infringement, or fitness for any particular purpose.
 
 This notice is intended to clarify the nature of the project and does not impose additional restrictions beyond the MIT License.
+
+## GNOME pointer move and resize FAQ
+
+### How do I move a focused window with the pointer?
+
+Hold Alt+Super+W and move the pointer. Release Super to finish moving the window.
+
+### How do I resize around the window center?
+
+Hold Alt+Super+E and move the pointer closer to or farther from the center. Release Super when the window is the size you want.
+
+### Can I configure my own move and resize shortcuts?
+
+Use the component menu or set the documented `MOVE_HOTKEY` and `RESIZE_HOTKEY` overrides. Reconfigure the relevant component to apply only that binding.
+
+### What does the Kitty launcher do?
+
+It opens Kitty on the workspace that was active when you used the shortcut. The script can then invoke the separately installed automatic tiling action.
+
+### How do I list or check the three components?
+
+Use `bash install.sh --list-components` to see the binding choices. `bash install.sh --detect` reports installed state.
 
 ## Installer lifecycle
 
